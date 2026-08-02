@@ -1,0 +1,10 @@
+export const PRESENCE_HEARTBEAT_MS = 4_000;
+export const PRESENCE_STALE_AFTER_MS = 12_000;
+export const BURST_CLUSTER_WINDOW_MS = 1_500;
+export const BURST_WINDOW_BEFORE_MS = 2_000;
+export const BURST_WINDOW_AFTER_MS = 3_000;
+export const BURST_CONTRIBUTION_DEADLINE_MS = 8_000;
+export const MIN_SCENE_LEAD_MS = 250;
+export const MAX_SCENE_LEAD_MS = 10_000;
+export const MAX_ACTIVE_CAMERAS = 6;
+

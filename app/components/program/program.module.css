@@ -1,0 +1,363 @@
+.program {
+  --gold: #ffd34e;
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  min-height: 100svh;
+  overflow: hidden;
+  color: #fff;
+  background: #050608;
+  font-family: var(--font-geist-sans, system-ui, sans-serif);
+}
+
+.scene,
+.heroScene,
+.duoScene,
+.sweepScene,
+.angle,
+.burstStill,
+.burstReveal {
+  position: absolute;
+  inset: 0;
+}
+
+.angle {
+  overflow: hidden;
+  background: #090a0c;
+}
+
+.video,
+.burstStill img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mirrored .video {
+  transform: scaleX(-1);
+}
+
+.angle::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(180deg, rgb(0 0 0 / 32%), transparent 25%, transparent 70%, rgb(0 0 0 / 38%));
+}
+
+.angleLabel {
+  position: absolute;
+  z-index: 3;
+  right: 24px;
+  bottom: 24px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 999px;
+  color: rgb(255 255 255 / 84%);
+  background: rgb(4 5 7 / 54%);
+  backdrop-filter: blur(12px);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.angleLabel span {
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: #ff514b;
+  box-shadow: 0 0 9px #ff514b;
+}
+
+.angleUnavailable {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(255 255 255 / 74%);
+  background: radial-gradient(circle, #202226 0%, #0b0c0f 72%);
+  font-size: clamp(12px, 1.4vw, 18px);
+  font-weight: 750;
+  letter-spacing: 0.11em;
+}
+
+.reconnectPulse,
+.waitingPulse {
+  width: 10px;
+  height: 10px;
+  margin-right: 12px;
+  border: 2px solid var(--gold);
+  border-radius: 50%;
+  animation: reconnect 1.2s ease-out infinite;
+}
+
+.duoPrimary {
+  right: 28%;
+}
+
+.duoSecondary {
+  left: 68%;
+  border-left: 4px solid var(--gold);
+  box-shadow: -22px 0 60px rgb(0 0 0 / 38%);
+  clip-path: polygon(14% 0, 100% 0, 100% 100%, 0 100%);
+}
+
+.duoSeam {
+  position: absolute;
+  z-index: 4;
+  top: -4%;
+  bottom: -4%;
+  left: 68%;
+  width: 2px;
+  transform: rotate(4deg);
+  transform-origin: center;
+  background: linear-gradient(transparent, var(--gold) 18%, var(--gold) 82%, transparent);
+  box-shadow: 0 0 26px var(--gold);
+}
+
+.sweepAngle {
+  visibility: hidden;
+  opacity: 0;
+  transform: scale(1.035);
+  transition: opacity 180ms ease, transform 520ms ease;
+}
+
+.sweepAngleActive {
+  visibility: visible;
+  opacity: 1;
+  transform: scale(1);
+}
+
+.sweepProgress {
+  position: absolute;
+  z-index: 4;
+  bottom: 30px;
+  left: 50%;
+  display: flex;
+  gap: 7px;
+  transform: translateX(-50%);
+}
+
+.sweepProgress span {
+  width: 26px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 24%);
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.sweepProgress span[data-active="true"] {
+  background: var(--gold);
+  box-shadow: 0 0 10px var(--gold);
+}
+
+.waitingScene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 50% 42%, rgb(255 211 78 / 10%), transparent 24%),
+    repeating-linear-gradient(90deg, transparent 0 79px, rgb(255 255 255 / 2%) 80px),
+    #08090b;
+  text-align: center;
+}
+
+.waitingScene .waitingPulse {
+  width: 26px;
+  height: 26px;
+  margin: 0 0 22px;
+}
+
+.waitingScene p {
+  max-width: 720px;
+  margin: 0;
+  font-size: clamp(28px, 5vw, 72px);
+  font-weight: 900;
+  line-height: 0.95;
+  letter-spacing: -0.055em;
+}
+
+.waitingScene small {
+  margin-top: 18px;
+  color: rgb(255 255 255 / 50%);
+  font-size: clamp(12px, 1.4vw, 17px);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.burstReveal {
+  z-index: 12;
+  background: #000;
+}
+
+.burstStill {
+  overflow: hidden;
+}
+
+.burstFlash {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: #fff;
+  animation: burstFlash 300ms ease-out forwards;
+}
+
+.burstTitle {
+  position: absolute;
+  z-index: 7;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  text-shadow: 0 2px 28px rgb(0 0 0 / 80%);
+  pointer-events: none;
+}
+
+.burstTitle span {
+  color: var(--gold);
+  font-size: clamp(32px, 8vw, 120px);
+  font-weight: 950;
+  line-height: 0.85;
+  letter-spacing: -0.075em;
+  white-space: nowrap;
+}
+
+.burstTitle strong {
+  margin-top: 14px;
+  font-size: clamp(11px, 1.3vw, 18px);
+  letter-spacing: 0.18em;
+}
+
+.programHeader {
+  position: absolute;
+  z-index: 20;
+  top: 24px;
+  left: 26px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.programHeader > div:first-child {
+  display: grid;
+}
+
+.programHeader span {
+  color: rgb(255 255 255 / 54%);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
+.programHeader strong {
+  margin-top: 3px;
+  font-size: clamp(18px, 2vw, 30px);
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+.onAir {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  color: #fff;
+  background: #e23b34;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  box-shadow: 0 0 18px rgb(226 59 52 / 36%);
+}
+
+.onAir span {
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.qrSlot {
+  position: absolute;
+  z-index: 20;
+  top: 22px;
+  right: 22px;
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 14px;
+  color: rgb(255 255 255 / 72%);
+  background: rgb(4 5 7 / 72%);
+  backdrop-filter: blur(12px);
+}
+
+.qrSlot > div {
+  display: grid;
+  width: clamp(64px, 7vw, 98px);
+  aspect-ratio: 1;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.qrSlot img,
+.qrSlot canvas,
+.qrSlot svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qrSlot > span {
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.09em;
+}
+
+.programFooter {
+  position: absolute;
+  z-index: 20;
+  right: 26px;
+  bottom: 20px;
+  left: 26px;
+  display: flex;
+  justify-content: space-between;
+  color: rgb(255 255 255 / 54%);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+@keyframes reconnect {
+  0% { transform: scale(0.72); opacity: 1; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+
+@keyframes burstFlash {
+  0% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reconnectPulse,
+  .waitingPulse,
+  .burstFlash { animation: none; }
+  .sweepAngle { transition: none; }
+}
