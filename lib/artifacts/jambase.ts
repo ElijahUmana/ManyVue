@@ -160,7 +160,6 @@ export function buildJamBaseEventsUrl(query: FestivalNowQuery, baseUrl = DEFAULT
   const base = new URL(baseUrl.replace(/\/+$/, "") + "/events");
   if (base.protocol !== "https:") throw new Error("JamBase base URL must be HTTPS");
   base.searchParams.set("name", query.name.trim());
-  base.searchParams.set("pageSize", "20");
   if (query.startDateFrom) base.searchParams.set("startDateFrom", query.startDateFrom);
   if (query.startDateTo) base.searchParams.set("startDateTo", query.startDateTo);
   return base.toString();
