@@ -173,6 +173,7 @@ export const programState = query({
             anchorServerMs: actionableBurst.anchorServerMs,
             windowStartServerMs: actionableBurst.windowStartServerMs,
             windowEndServerMs: actionableBurst.windowEndServerMs,
+            initiatorParticipantIds: actionableBurst.initiatorParticipantIds,
             expectedParticipantIds: actionableBurst.expectedParticipantIds,
             // Existing clients use readyContributionCount for the live Burst
             // counter. A preserved rolling buffer is ready for the realtime

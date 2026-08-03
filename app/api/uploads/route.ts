@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "A non-empty media file is required." }, { status: 400 });
   }
   if (file.size > MAX_MEDIA_BYTES) {
-    return Response.json({ ok: false, error: "Burst media must stay below 1.8 MB; use the 1 Mbps four-second capture profile." }, { status: 413 });
+    return Response.json({ ok: false, error: "Burst media must stay below 1.8 MB; use the rolling low-bitrate capture profile." }, { status: 413 });
   }
 
   const session = safePart(form.get("session"), "session");

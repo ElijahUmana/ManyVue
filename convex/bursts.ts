@@ -274,3 +274,78 @@ export const mine = query({
     );
   },
 });
+
+export const recentHistory = query({
+  args: {
+    participantId: v.id("participants"),
+    participantCapability: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    // The participant capability is the authority boundary. Deriving the
+    // session from the authenticated participant prevents callers from using a
+    // valid token to inspect another session's Burst history.
+    const participant = await assertParticipant(ctx, args.participantId, args.participantCapability);
+    const limit = args.limit ?? 20;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+      throw new ConvexError({
+        code: "INVALID_LIMIT",
+        message: "Burst history limit must be an integer between 1 and 50.",
+      });
+    }
+
+    const bursts = await ctx.db
+      .query("bursts")
+      .withIndex("by_session_anchor", (q) => q.eq("sessionId", participant.sessionId))
+      .order("desc")
+      .take(limit);
+
+    const items = await Promise.all(
+      bursts.map(async (burst) => {
+        const contribution = await ctx.db
+          .query("burstContributions")
+          .withIndex("by_burst_participant", (q) =>
+            q.eq("burstId", burst._id).eq("participantId", participant._id),
+          )
+          .unique();
+        const contributed = Boolean(
+          contribution && (
+            contribution.status === "preserved" ||
+            contribution.status === "uploading" ||
+            contribution.status === "ready" ||
+            contribution.preservedStartMs !== undefined ||
+            contribution.assetId !== undefined
+          ),
+        );
+
+        return {
+          burstId: burst._id,
+          anchorServerMs: burst.anchorServerMs,
+          windowStartServerMs: burst.windowStartServerMs,
+          windowEndServerMs: burst.windowEndServerMs,
+          contributionDeadlineMs: burst.contributionDeadlineMs,
+          state: burst.status,
+          counts: {
+            markers: burst.markerCount,
+            expected: burst.expectedParticipantIds.length,
+            acknowledged: burst.acknowledgedContributionCount ?? 0,
+            ready: burst.readyContributionCount,
+          },
+          wasInitiator: burst.initiatorParticipantIds.includes(participant._id),
+          wasExpected: burst.expectedParticipantIds.includes(participant._id),
+          contributed,
+          contributionStatus: contribution?.status ?? null,
+          contributionUpdatedAt: contribution?.updatedAt ?? null,
+          createdAt: burst.createdAt,
+          updatedAt: burst.updatedAt,
+        };
+      }),
+    );
+
+    return {
+      sessionId: participant.sessionId,
+      participantId: participant._id,
+      items,
+    };
+  },
+});

@@ -129,7 +129,7 @@ export async function uploadBurstCaptureAssets(
   if (input.clip.size > MAX_SITES_UPLOAD_BYTES) {
     throw new BurstUploadError(
       "clip-upload",
-      `Burst microclip is ${input.clip.size} bytes; the four-second capture must stay below ${MAX_SITES_UPLOAD_BYTES} bytes.`,
+      `Burst source is ${input.clip.size} bytes; the rolling capture must stay below ${MAX_SITES_UPLOAD_BYTES} bytes.`,
     );
   }
   const stableBase = `burst-${input.burstId}-${input.participant}`;

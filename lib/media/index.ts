@@ -5,5 +5,6 @@ export * from "./durable-recorder";
 export * from "./livekit-adapter";
 export * from "./quality";
 export * from "./reconnect";
+export * from "./rolling-burst-recorder";
 export * from "./scene-scheduler";
 export * from "./types";

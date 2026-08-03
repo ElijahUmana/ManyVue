@@ -8,7 +8,7 @@ export const PRESENCE_STALE_AFTER_MS = 20_000;
 // manual/scheduled control, while unattended AUTO still prefers strict-live.
 export const CONTROL_RECOVERY_GRACE_MS = 60_000;
 export const BURST_CLUSTER_WINDOW_MS = 1_500;
-export const BURST_WINDOW_BEFORE_MS = 2_000;
+export const BURST_WINDOW_BEFORE_MS = 3_000;
 export const BURST_WINDOW_AFTER_MS = 3_000;
 export const BURST_CONTRIBUTION_DEADLINE_MS = 8_000;
 export const MIN_SCENE_LEAD_MS = 250;

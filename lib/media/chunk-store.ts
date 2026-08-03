@@ -101,6 +101,16 @@ export class MediaChunkStore {
     return value;
   }
 
+  async listRecordings(): Promise<StoredRecording[]> {
+    const database = await this.open();
+    const transaction = database.transaction(RECORDINGS, "readonly");
+    const recordings = await requestResult(
+      transaction.objectStore(RECORDINGS).getAll() as IDBRequest<StoredRecording[]>,
+    );
+    await transactionDone(transaction);
+    return recordings.sort((left, right) => right.createdAtMs - left.createdAtMs);
+  }
+
   async putChunk(chunk: StoredMediaChunk): Promise<void> {
     await this.write(CHUNKS, (store) => store.put(chunk));
   }
