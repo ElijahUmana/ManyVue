@@ -7,7 +7,7 @@ import type { Room as LiveRoom } from "livekit-client";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { burstEditCandidates, listBurstAssets, uploadBurstCaptureAssets } from "@/lib/artifacts/burst-upload";
-import { DurableMediaRecorder, RollingBurstBuffer } from "@/lib/media";
+import { DurableMediaRecorder } from "@/lib/media";
 import { probeVideoDurationMs, tryCreateContactSheet } from "@/lib/media/video-artifact";
 
 type Feed = {
@@ -31,6 +31,10 @@ type SharedBurstState = {
   windowEndServerMs: number;
   expectedParticipantIds: Id<"participants">[];
   readyContributionCount: number;
+};
+type PrimedBurstCapture = {
+  cueAt: number;
+  result: Promise<{ blob: Blob; startedAtMs: number; endedAtMs: number }>;
 };
 
 type Scene = {
@@ -299,8 +303,9 @@ export default function CrowdCutApp() {
   const participantIdRef = useRef("");
   const previewRef = useRef<HTMLVideoElement>(null);
   const recorderRef = useRef<DurableMediaRecorder | null>(null);
-  const burstRecorderRef = useRef<DurableMediaRecorder | null>(null);
-  const burstBufferRef = useRef<RollingBurstBuffer | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const primedBurstRef = useRef<PrimedBurstCapture | null>(null);
+  const burstPrimerHandlerRef = useRef<(cueAt: number) => void>(() => undefined);
   const burstCaptureIdsRef = useRef(new Set<string>());
   const burstCaptureHandlerRef = useRef<(sharedBurst: SharedBurstState) => void>(() => undefined);
   const channelRef = useRef<BroadcastChannel | null>(null);
@@ -399,6 +404,7 @@ export default function CrowdCutApp() {
       setBurstCountdown(Math.max(1, Math.ceil((message.at - Date.now()) / 1000)));
       setBurstPhase("countdown");
       setLastBurstCount(0);
+      burstPrimerHandlerRef.current(message.at);
     }
     if (message.type === "burst_request" && view === "program") {
       setBurst({ id: message.id, at: message.at, count: 0 });
@@ -831,6 +837,35 @@ export default function CrowdCutApp() {
     }
   }, [ownedBurst, participantId, sessionId]);
 
+  const primeBurstCapture = useCallback((cueAt: number) => {
+    const existing = primedBurstRef.current;
+    if (existing && Math.abs(existing.cueAt - cueAt) < 4_000) return existing.result;
+    const stream = cameraStreamRef.current;
+    if (!stream?.getVideoTracks().some((track) => track.readyState === "live")) return null;
+    const startedAtMs = Date.now();
+    const recorder = new DurableMediaRecorder(stream, {
+      recordingId: crypto.randomUUID(),
+      participantId: participantIdRef.current,
+      chunkDurationMs: 500,
+      videoBitsPerSecond: 1_000_000,
+      audioBitsPerSecond: 64_000,
+    });
+    const result = (async () => {
+      await recorder.start();
+      // Countdown messages prime one complete, independently playable file:
+      // anticipation before the cue plus the reaction immediately after it.
+      await wait(Math.max(4_000, cueAt + 2_500 - Date.now()));
+      const stopped = await recorder.stop();
+      return { blob: stopped.blob, startedAtMs, endedAtMs: Date.now() };
+    })();
+    primedBurstRef.current = { cueAt, result };
+    return result;
+  }, []);
+
+  useEffect(() => {
+    burstPrimerHandlerRef.current = (cueAt) => { void primeBurstCapture(cueAt); };
+  }, [primeBurstCapture]);
+
   const captureBurstContribution = useCallback(async (sharedBurst: SharedBurstState) => {
     const sharedId = String(sharedBurst._id);
     const marker = { id: sharedId, at: sharedBurst.anchorServerMs, count: sharedBurst.readyContributionCount };
@@ -843,31 +878,25 @@ export default function CrowdCutApp() {
     setArtifactPhase("uploading");
     setArtifactMessage("Capturing and uploading this shared moment while every camera keeps filming…");
     try {
-      const buffer = burstBufferRef.current;
       const client = convexRef.current;
-      if (!buffer || !client || !participantCapability || !participantId) {
+      const primedCapture = primeBurstCapture(sharedBurst.anchorServerMs);
+      if (!primedCapture || !client || !participantCapability || !participantId) {
         throw new Error("This camera is not ready to preserve the Burst yet.");
       }
-      const capture = await buffer.capture({
-        id: `marker-${sharedId}`,
-        participantId,
-        serverMomentMs: sharedBurst.anchorServerMs,
-        preRollMs: 1_500,
-        postRollMs: 2_500,
-      });
-      const elapsedMs = Math.max(1, capture.actualEndAtMs - capture.actualStartAtMs);
+      const capture = await primedCapture;
+      const elapsedMs = Math.max(1, capture.endedAtMs - capture.startedAtMs);
       const probe = await probeVideoDurationMs(capture.blob, elapsedMs);
       const burstOffsetMs = Math.min(
         probe.durationMs,
-        Math.max(0, capture.marker.localMomentMs - capture.actualStartAtMs),
+        Math.max(0, sharedBurst.anchorServerMs - capture.startedAtMs),
       );
 
       await client.mutation(api.bursts.acknowledgePreserved, {
         participantId: participantId as Id<"participants">,
         participantCapability,
         burstId: sharedBurst._id,
-        preservedStartMs: Math.max(0, capture.actualStartAtMs - recordingStartedRef.current),
-        preservedEndMs: Math.max(1, capture.actualEndAtMs - recordingStartedRef.current),
+        preservedStartMs: Math.max(0, capture.startedAtMs - recordingStartedRef.current),
+        preservedEndMs: Math.max(1, capture.endedAtMs - recordingStartedRef.current),
       });
 
       const sheet = await tryCreateContactSheet(capture.blob, burstOffsetMs);
@@ -891,9 +920,10 @@ export default function CrowdCutApp() {
         mimeType: capture.blob.type || "video/webm",
         byteLength: capture.blob.size,
         durationMs: probe.durationMs,
-        startsAtServerMs: Math.round(sharedBurst.anchorServerMs + (capture.actualStartAtMs - capture.marker.localMomentMs)),
-        endsAtServerMs: Math.round(sharedBurst.anchorServerMs + (capture.actualEndAtMs - capture.marker.localMomentMs)),
+        startsAtServerMs: Math.round(capture.startedAtMs),
+        endsAtServerMs: Math.round(capture.endedAtMs),
       });
+      if (primedBurstRef.current?.cueAt === sharedBurst.anchorServerMs) primedBurstRef.current = null;
       setUploadState("uploaded");
       setBurstPhase("preview");
       setArtifactPhase("waiting");
@@ -907,7 +937,7 @@ export default function CrowdCutApp() {
       setArtifactMessage(error instanceof Error ? error.message : "Burst upload failed; your full original remains safe on this device.");
       burstCaptureIdsRef.current.delete(sharedId);
     }
-  }, [buildArtifact, participantCapability, participantId, sessionId]);
+  }, [buildArtifact, participantCapability, participantId, primeBurstCapture, sessionId]);
 
   useEffect(() => {
     burstCaptureHandlerRef.current = (sharedBurst) => { void captureBurstContribution(sharedBurst); };
@@ -929,6 +959,7 @@ export default function CrowdCutApp() {
         audio: { echoCancellation: true, noiseSuppression: true },
       });
       setCameraStream(stream);
+      cameraStreamRef.current = stream;
       if (previewRef.current) {
         previewRef.current.srcObject = stream;
         await previewRef.current.play();
@@ -942,24 +973,11 @@ export default function CrowdCutApp() {
         chunkDurationMs: 1000,
         videoBitsPerSecond: 4_000_000,
       });
-      const burstRecorder = new DurableMediaRecorder(stream, {
-        recordingId: crypto.randomUUID(),
-        participantId: convexCamera.id,
-        chunkDurationMs: 500,
-        videoBitsPerSecond: 1_000_000,
-        audioBitsPerSecond: 64_000,
-      });
       await recorder.start();
-      await burstRecorder.start();
       const startedAt = Date.now();
       recordingStartedRef.current = startedAt;
       setCameraStartedAt(startedAt);
       recorderRef.current = recorder;
-      burstRecorderRef.current = burstRecorder;
-      burstBufferRef.current = new RollingBurstBuffer(burstRecorder, {
-        serverToLocal: (serverMs) => serverMs,
-        localToServer: (localMs) => localMs,
-      });
       setRecording(true);
       await connectTransport("camera", stream, convexCamera.livekitIdentity);
     } catch (error) {
@@ -978,10 +996,7 @@ export default function CrowdCutApp() {
       setArtifactPhase((current) => current === "idle" ? "saved" : current);
       setArtifactMessage((current) => current || "Your complete original is saved on this device and ready to download.");
     }
-    const burstRecorder = burstRecorderRef.current;
-    if (burstRecorder?.state === "recording") await burstRecorder.stop().catch(() => undefined);
-    burstRecorderRef.current = null;
-    burstBufferRef.current = null;
+    primedBurstRef.current = null;
     setRecording(false);
     setSelectedLive(false);
     if (convexRef.current && participantCapability) {
@@ -997,6 +1012,7 @@ export default function CrowdCutApp() {
     await roomRef.current?.disconnect();
     roomRef.current = null;
     cameraStream?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
   }, [cameraStream, participantCapability, participantId]);
 
   const triggerBurst = useCallback(async () => {
@@ -1010,6 +1026,7 @@ export default function CrowdCutApp() {
     setBurstPhase("countdown");
     setLastBurstCount(0);
     try {
+      if (view === "camera") void primeBurstCapture(cueAt);
       await send({ type: "burst_countdown", by: participantId, at: cueAt });
       await wait(Math.max(0, cueAt - Date.now()));
       setBurstPhase("capturing");
@@ -1054,7 +1071,7 @@ export default function CrowdCutApp() {
     } finally {
       setBurstPending(false);
     }
-  }, [burstPending, convexSessionId, hostCapability, participantCapability, participantId, recording, send, showLive, view]);
+  }, [burstPending, convexSessionId, hostCapability, participantCapability, participantId, primeBurstCapture, recording, send, showLive, view]);
 
   const commitScene = useCallback(async (
     activeIds: string[],
