@@ -112,6 +112,9 @@ export default function CrowdCutApp() {
   const [convexSessionId, setConvexSessionId] = useState("");
   const [hostCapability, setHostCapability] = useState("");
   const [qr, setQr] = useState("");
+  const [joinUrl, setJoinUrl] = useState("");
+  const [joinExpanded, setJoinExpanded] = useState(true);
+  const [joinCopied, setJoinCopied] = useState(false);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [scene, setScene] = useState<Scene>({ layout: "hero", activeIds: [], cutAt: 0, revision: 0 });
   const [, setTransport] = useState<"idle" | "connecting" | "live" | "rehearsal" | "error">("idle");
@@ -160,15 +163,18 @@ export default function CrowdCutApp() {
   }, []);
 
   useEffect(() => {
-    if (!sessionId) return;
-    const joinUrl = `${window.location.origin}/?view=camera&session=${encodeURIComponent(sessionId)}`;
-    void QRCode.toDataURL(joinUrl, {
-      width: 440,
-      margin: 1,
-      errorCorrectionLevel: "H",
-      color: { dark: "#050509", light: "#f5ff42" },
-    }).then(setQr);
-  }, [sessionId]);
+    if (!sessionId || view !== "program" || !convexSessionId) return;
+    const nextJoinUrl = `${window.location.origin}/?view=camera&session=${encodeURIComponent(sessionId)}`;
+    void QRCode.toDataURL(nextJoinUrl, {
+      width: 960,
+      margin: 5,
+      errorCorrectionLevel: "M",
+      color: { dark: "#000000", light: "#ffffff" },
+    }).then((dataUrl) => {
+      setJoinUrl(nextJoinUrl);
+      setQr(dataUrl);
+    });
+  }, [convexSessionId, sessionId, view]);
 
   const applyMessage = useCallback((message: WireMessage) => {
     if (message.type === "scene") {
@@ -241,7 +247,16 @@ export default function CrowdCutApp() {
       if (stored) {
         try { host = JSON.parse(stored) as HostSession; } catch { host = null; }
       }
+      if (host) {
+        try {
+          const existing = await client.query(api.sessions.bySlug, { slug: host.slug });
+          if (existing.status === "ended" || !existing.publicJoinEnabled) host = null;
+        } catch {
+          host = null;
+        }
+      }
       if (!host) {
+        window.localStorage.removeItem("crowdcut-host-session");
         host = await client.action(api.sessions.create, {
           title: "Outside Lands CrowdCut Live",
           festivalName: "Outside Lands",
@@ -266,6 +281,7 @@ export default function CrowdCutApp() {
       subscribe(host.slug);
       setTransportMessage("Convex production room ready");
     })().catch((error) => {
+      window.localStorage.removeItem("crowdcut-host-session");
       setTransport("error");
       setTransportMessage(error instanceof Error ? error.message : "Convex room setup failed.");
     });
@@ -297,6 +313,19 @@ export default function CrowdCutApp() {
         topic: "crowdcut-control",
       });
     }
+  }, []);
+
+  const copyJoinLink = useCallback(async () => {
+    if (!joinUrl) return;
+    await navigator.clipboard.writeText(joinUrl);
+    setJoinCopied(true);
+    window.setTimeout(() => setJoinCopied(false), 1800);
+  }, [joinUrl]);
+
+  const createFreshRoom = useCallback(() => {
+    window.localStorage.removeItem("crowdcut-host-session");
+    window.localStorage.removeItem("crowdcut-program-participant");
+    window.location.reload();
   }, []);
 
   const ensureConvexCamera = useCallback(async () => {
@@ -828,9 +857,25 @@ export default function CrowdCutApp() {
           </div>
         </header>
 
-        <aside className="persistent-join">
-          {qr && <img src={qr} alt="Scan to join CrowdCut as a camera" />}
-          <div><b>JOIN THE FILM</b><span>Scan · point · record</span></div>
+        <aside className={`persistent-join ${joinExpanded ? "expanded" : "compact"}`} aria-label="Join CrowdCut camera room">
+          <button className="join-qr" onClick={() => setJoinExpanded(true)} aria-label={joinExpanded ? "Camera join QR code" : "Enlarge camera join QR code"}>
+            {qr
+              ? <img src={qr} alt="Scan to join CrowdCut as a camera" />
+              : <span className="qr-loading">CREATING<br />LIVE ROOM…</span>}
+          </button>
+          <div className="join-details">
+            <p className="eyebrow">PHONE CAMERA JOIN</p>
+            <b>SCAN TO BECOME AN ANGLE</b>
+            <span>Opens the camera directly. No account or app download.</span>
+            {joinUrl && <code>{joinUrl.replace(/^https?:\/\//, "")}</code>}
+            <div className="join-actions">
+              <button onClick={() => void copyJoinLink()}>{joinCopied ? "LINK COPIED" : "COPY JOIN LINK"}</button>
+              <a href={joinUrl || undefined} target="_blank" rel="noreferrer" aria-disabled={!joinUrl}>TEST JOIN PAGE</a>
+              <button onClick={createFreshRoom}>NEW ROOM</button>
+              <button onClick={() => setJoinExpanded(false)}>COLLAPSE</button>
+            </div>
+          </div>
+          {!joinExpanded && <button className="join-expand" onClick={() => setJoinExpanded(true)}>ENLARGE QR</button>}
         </aside>
 
         <footer className="program-footer">
