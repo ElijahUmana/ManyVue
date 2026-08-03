@@ -986,11 +986,12 @@ export default function CrowdCutApp() {
     reason?: string,
     sourceOverride?: "manual" | "deterministic" | "ai",
   ) => {
+    const issuedAt = Date.now();
     const next: Scene = {
       layout,
       activeIds,
-      cutAt: Date.now() + 600,
-      revision: scene.revision + 1,
+      cutAt: issuedAt + 600,
+      revision: issuedAt,
     };
     if (convexRef.current && convexSessionId && hostCapability && activeIds.length) {
       await convexRef.current.mutation(api.director.scheduleScene, {
@@ -1007,7 +1008,7 @@ export default function CrowdCutApp() {
     }
     applyMessage({ type: "scene", scene: next });
     await send({ type: "scene", scene: next });
-  }, [applyMessage, convexSessionId, directorAuto, hostCapability, scene.revision, send]);
+  }, [applyMessage, convexSessionId, directorAuto, hostCapability, send]);
 
   const startProgram = useCallback(async () => {
     await connectTransport("program");
@@ -1197,7 +1198,7 @@ export default function CrowdCutApp() {
 
   useEffect(() => {
     if (view !== "program" || !showLive || !directorAuto || feeds.length === 0 || burst) return;
-    const timer = window.setInterval(() => {
+    const directNow = () => {
       if (convexRef.current && convexSessionId && hostCapability) {
         setDirectorDecision("AI AUTO · CONVEX IS DIRECTING THE ROOM…");
         void convexRef.current.mutation(api.director.scheduleAutoScene, {
@@ -1223,7 +1224,12 @@ export default function CrowdCutApp() {
       ).catch((error) => {
         setTransportMessage(error instanceof Error ? error.message : "The automatic camera cut failed.");
       });
-    }, 3600);
+    };
+    // TAKE immediately when AUTO is enabled; subsequent cuts follow the
+    // predictable production cadence. A presenter should never click AUTO
+    // and wonder whether anything happened.
+    directNow();
+    const timer = window.setInterval(directNow, 3600);
     return () => window.clearInterval(timer);
   }, [burst, commitScene, convexSessionId, directorAuto, feeds, hostCapability, showLive, view]);
 
