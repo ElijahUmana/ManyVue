@@ -20,8 +20,14 @@ test("does not cluster a distant marker or a closed burst", () => {
   );
 });
 
+test("keeps clustering while the live preview is ready", () => {
+  assert.equal(
+    shouldJoinBurstCluster({ anchorServerMs: 10_000, status: "preview_ready" }, 10_800),
+    true,
+  );
+});
+
 test("moves the shared anchor toward later initiators without losing the original cue", () => {
   assert.equal(mergedBurstAnchor(10_000, 10_300, 1), 10_150);
   assert.equal(mergedBurstAnchor(10_150, 10_300, 2), 10_200);
 });
-

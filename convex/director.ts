@@ -1,5 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { assertHost, assertParticipant, publicParticipant, publicSession } from "./lib/capabilities";
 import {
   assertParticipantsBelongToSession,
@@ -8,6 +10,62 @@ import {
 } from "./lib/runtime";
 import { sceneLayout, sceneSource } from "./validators";
 import { validateSceneRecipe } from "../lib/realtime/scenes";
+import { planAutomaticScene } from "../lib/realtime/autodirector";
+
+async function commitScene(
+  ctx: MutationCtx,
+  session: Doc<"sessions">,
+  args: {
+    layout: "hero" | "duo" | "sweep";
+    activeParticipantIds: Id<"participants">[];
+    cutAtServerMs: number;
+    source: "manual" | "deterministic" | "ai";
+    reason?: string;
+    idempotencyKey: string;
+  },
+) {
+  const existing = await ctx.db
+    .query("scenes")
+    .withIndex("by_session_idempotency", (q) =>
+      q.eq("sessionId", session._id).eq("idempotencyKey", args.idempotencyKey),
+    )
+    .unique();
+  if (existing) return existing;
+  const now = Date.now();
+  const validationError = validateSceneRecipe({
+    layout: args.layout,
+    activeParticipantIds: args.activeParticipantIds.map(String),
+    cutAtServerMs: args.cutAtServerMs,
+    nowMs: now,
+  });
+  if (validationError) throw new ConvexError({ code: "INVALID_SCENE", message: validationError });
+  const participants = await assertParticipantsBelongToSession(ctx, session._id, args.activeParticipantIds);
+  if (participants.some((participant) => !participantIsLiveCamera(participant!, now))) {
+    throw new ConvexError({
+      code: "CAMERA_UNAVAILABLE",
+      message: "Every selected camera must be recording, connected, recent, and usable.",
+    });
+  }
+  const revision = session.sceneRevision + 1;
+  const sceneId = await ctx.db.insert("scenes", {
+    sessionId: session._id,
+    revision,
+    layout: args.layout,
+    activeParticipantIds: args.activeParticipantIds,
+    cutAtServerMs: args.cutAtServerMs,
+    source: args.source,
+    reason: args.reason?.trim().slice(0, 240),
+    idempotencyKey: args.idempotencyKey,
+    status: "scheduled",
+    createdAt: now,
+  });
+  if (session.currentSceneId) {
+    const prior = await ctx.db.get(session.currentSceneId);
+    if (prior) await ctx.db.patch(prior._id, { status: prior.cutAtServerMs <= now ? "completed" : "superseded" });
+  }
+  await ctx.db.patch(session._id, { currentSceneId: sceneId, sceneRevision: revision });
+  return await ctx.db.get(sceneId);
+}
 
 export const scheduleScene = mutation({
   args: {
@@ -25,6 +83,22 @@ export const scheduleScene = mutation({
     if (session.status !== "live") {
       throw new ConvexError({ code: "SESSION_NOT_LIVE", message: "Start the live production before scheduling scenes." });
     }
+    return await commitScene(ctx, session, args);
+  },
+});
+
+export const scheduleAutoScene = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    hostCapability: v.string(),
+    cutAtServerMs: v.number(),
+    idempotencyKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await assertHost(ctx, args.sessionId, args.hostCapability);
+    if (session.status !== "live") {
+      throw new ConvexError({ code: "SESSION_NOT_LIVE", message: "Start the live production before scheduling scenes." });
+    }
     const existing = await ctx.db
       .query("scenes")
       .withIndex("by_session_idempotency", (q) =>
@@ -32,51 +106,34 @@ export const scheduleScene = mutation({
       )
       .unique();
     if (existing) return existing;
-
     const now = Date.now();
-    const validationError = validateSceneRecipe({
-      layout: args.layout,
-      activeParticipantIds: args.activeParticipantIds.map(String),
-      cutAtServerMs: args.cutAtServerMs,
-      nowMs: now,
+    const participants = await ctx.db
+      .query("participants")
+      .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+      .collect();
+    const live = participants.filter((participant) => participantIsLiveCamera(participant, now));
+    const previous = session.currentSceneId ? await ctx.db.get(session.currentSceneId) : null;
+    const plan = planAutomaticScene({
+      cameras: live.map((camera) => ({
+        id: String(camera._id),
+        joinedAt: camera.joinedAt,
+        quality: camera.mediaHealth?.connectionQuality ?? 0.75,
+        stageZone: camera.shotMetadata?.stageZone ?? "unknown",
+        framing: camera.shotMetadata?.framing ?? "unknown",
+        metadataConfidence: camera.shotMetadata?.confidence ?? 0,
+      })),
+      previousCameraIds: previous?.activeParticipantIds.map(String) ?? [],
+      nextRevision: session.sceneRevision + 1,
     });
-    if (validationError) {
-      throw new ConvexError({ code: "INVALID_SCENE", message: validationError });
-    }
-    const participants = await assertParticipantsBelongToSession(
-      ctx,
-      session._id,
-      args.activeParticipantIds,
-    );
-    if (participants.some((participant) => !participantIsLiveCamera(participant!, now))) {
-      throw new ConvexError({
-        code: "CAMERA_UNAVAILABLE",
-        message: "Every selected camera must be recording, connected, recent, and usable.",
-      });
-    }
-    const revision = session.sceneRevision + 1;
-    const sceneId = await ctx.db.insert("scenes", {
-      sessionId: session._id,
-      revision,
-      layout: args.layout,
-      activeParticipantIds: args.activeParticipantIds,
+    if (!plan) throw new ConvexError({ code: "NO_LIVE_CAMERAS", message: "No healthy recording camera is available." });
+    return await commitScene(ctx, session, {
+      layout: plan.layout,
+      activeParticipantIds: plan.activeCameraIds as Id<"participants">[],
       cutAtServerMs: args.cutAtServerMs,
-      source: args.source,
-      reason: args.reason?.trim().slice(0, 240),
+      source: "deterministic",
+      reason: plan.reason,
       idempotencyKey: args.idempotencyKey,
-      status: "scheduled",
-      createdAt: now,
     });
-    if (session.currentSceneId) {
-      const prior = await ctx.db.get(session.currentSceneId);
-      if (prior) {
-        await ctx.db.patch(prior._id, {
-          status: prior.cutAtServerMs <= now ? "completed" : "superseded",
-        });
-      }
-    }
-    await ctx.db.patch(session._id, { currentSceneId: sceneId, sceneRevision: revision });
-    return await ctx.db.get(sceneId);
   },
 });
 
@@ -108,6 +165,7 @@ export const programState = query({
             windowEndServerMs: latestBurst.windowEndServerMs,
             expectedParticipantIds: latestBurst.expectedParticipantIds,
             readyContributionCount: latestBurst.readyContributionCount,
+            acknowledgedContributionCount: latestBurst.acknowledgedContributionCount ?? 0,
             status: latestBurst.status,
           }
         : null,

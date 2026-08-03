@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       session,
       participant,
       kind,
+      burstId: safePart(form.get("burstId"), "none"),
       durationMs: safePart(form.get("durationMs"), "0"),
       burstOffsetMs: safePart(form.get("burstOffsetMs"), "0"),
     },

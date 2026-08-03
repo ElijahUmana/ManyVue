@@ -12,6 +12,43 @@ export const participantRole = v.union(
   v.literal("seed_camera"),
 );
 
+export const cameraStageZone = v.union(
+  v.literal("left"),
+  v.literal("center"),
+  v.literal("right"),
+  v.literal("crowd"),
+  v.literal("unknown"),
+);
+
+export const cameraFraming = v.union(
+  v.literal("close"),
+  v.literal("medium"),
+  v.literal("wide"),
+  v.literal("unknown"),
+);
+
+export const cameraMetadataSource = v.union(
+  v.literal("self_reported"),
+  v.literal("host"),
+  v.literal("heuristic"),
+  v.literal("ai"),
+);
+
+export const shotMetadataInput = v.object({
+  stageZone: cameraStageZone,
+  framing: cameraFraming,
+  confidence: v.optional(v.number()),
+  source: cameraMetadataSource,
+});
+
+export const shotMetadata = v.object({
+  stageZone: cameraStageZone,
+  framing: cameraFraming,
+  confidence: v.optional(v.number()),
+  source: cameraMetadataSource,
+  updatedAt: v.number(),
+});
+
 export const connectionState = v.union(
   v.literal("online"),
   v.literal("degraded"),
@@ -100,4 +137,3 @@ export const deviceInfo = v.object({
   orientation: v.optional(v.union(v.literal("portrait"), v.literal("landscape"))),
   mimeType: v.optional(v.string()),
 });
-

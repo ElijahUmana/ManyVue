@@ -6,9 +6,10 @@ import {
   createCapabilityToken,
   hashCapability,
   publicParticipant,
+  assertHost,
 } from "./lib/capabilities";
 import { participantIsLiveCamera, requireSessionBySlug } from "./lib/runtime";
-import { connectionState, deviceInfo, mediaHealth, participantRole } from "./validators";
+import { connectionState, deviceInfo, mediaHealth, participantRole, shotMetadataInput } from "./validators";
 import { PRESENCE_STALE_AFTER_MS } from "../lib/realtime/constants";
 
 function assertSequence(previous: number, incoming: number) {
@@ -24,6 +25,7 @@ export const join = action({
     displayName: v.optional(v.string()),
     role: v.optional(participantRole),
     deviceInfo: v.optional(deviceInfo),
+    shotMetadata: v.optional(shotMetadataInput),
   },
   handler: async (
     ctx,
@@ -41,6 +43,7 @@ export const join = action({
       displayName: args.displayName?.trim().slice(0, 60),
       role: args.role ?? "attendee",
       deviceInfo: args.deviceInfo,
+      shotMetadata: args.shotMetadata,
       capabilityHash: await hashCapability(participantCapability),
       livekitIdentity: `camera_${identitySuffix}`,
     });
@@ -54,6 +57,7 @@ export const joinInternal = internalMutation({
     displayName: v.optional(v.string()),
     role: participantRole,
     deviceInfo: v.optional(deviceInfo),
+    shotMetadata: v.optional(shotMetadataInput),
     capabilityHash: v.string(),
     livekitIdentity: v.string(),
   },
@@ -72,6 +76,7 @@ export const joinInternal = internalMutation({
       connectionState: "online",
       recordingState: "idle",
       deviceInfo: args.deviceInfo,
+      shotMetadata: args.shotMetadata ? { ...args.shotMetadata, updatedAt: now } : undefined,
       joinedAt: now,
       lastSeenAt: now,
       lastClientSequence: 0,
@@ -79,6 +84,47 @@ export const joinInternal = internalMutation({
     const livekitIdentity = String(participantId);
     await ctx.db.patch(participantId, { livekitIdentity });
     return { participantId, livekitIdentity, sessionId: session._id };
+  },
+});
+
+export const updateShotMetadata = mutation({
+  args: {
+    participantId: v.id("participants"),
+    participantCapability: v.string(),
+    shotMetadata: shotMetadataInput,
+  },
+  handler: async (ctx, args) => {
+    const participant = await assertParticipant(ctx, args.participantId, args.participantCapability);
+    const confidence = args.shotMetadata.confidence;
+    if (confidence !== undefined && (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)) {
+      throw new ConvexError({ code: "INVALID_CONFIDENCE", message: "Camera confidence must be between 0 and 1." });
+    }
+    const updatedAt = Date.now();
+    await ctx.db.patch(participant._id, {
+      shotMetadata: { ...args.shotMetadata, updatedAt },
+      lastSeenAt: updatedAt,
+    });
+    return { shotMetadata: { ...args.shotMetadata, updatedAt } };
+  },
+});
+
+export const assignShotMetadata = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    hostCapability: v.string(),
+    participantId: v.id("participants"),
+    shotMetadata: shotMetadataInput,
+  },
+  handler: async (ctx, args) => {
+    const session = await assertHost(ctx, args.sessionId, args.hostCapability);
+    const participant = await ctx.db.get(args.participantId);
+    if (!participant || participant.sessionId !== session._id) {
+      throw new ConvexError({ code: "CAMERA_NOT_FOUND", message: "Camera does not belong to this session." });
+    }
+    const updatedAt = Date.now();
+    const shotMetadata = { ...args.shotMetadata, source: "host" as const, updatedAt };
+    await ctx.db.patch(participant._id, { shotMetadata });
+    return { shotMetadata };
   },
 });
 

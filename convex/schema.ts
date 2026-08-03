@@ -11,6 +11,7 @@ import {
   participantRole,
   recordingState,
   renderStatus,
+  shotMetadata,
   sceneLayout,
   sceneSource,
   sceneStatus,
@@ -47,6 +48,7 @@ export default defineSchema({
     recordingState,
     deviceInfo: v.optional(deviceInfo),
     mediaHealth: v.optional(mediaHealth),
+    shotMetadata: v.optional(shotMetadata),
     joinedAt: v.number(),
     lastSeenAt: v.number(),
     recordingStartedAt: v.optional(v.number()),
@@ -86,6 +88,7 @@ export default defineSchema({
     expectedParticipantIds: v.array(v.id("participants")),
     markerCount: v.number(),
     readyContributionCount: v.number(),
+    acknowledgedContributionCount: v.optional(v.number()),
     status: burstStatus,
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -180,4 +183,3 @@ export default defineSchema({
     .index("by_provider_event", ["providerEventId"])
     .index("by_render_job", ["renderJobId"]),
 });
-

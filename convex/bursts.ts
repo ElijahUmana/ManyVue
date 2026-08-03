@@ -9,7 +9,7 @@ import {
   BURST_WINDOW_AFTER_MS,
   BURST_WINDOW_BEFORE_MS,
 } from "../lib/realtime/constants";
-import { mergedBurstAnchor, shouldJoinBurstCluster } from "../lib/realtime/burst-clustering";
+import { shouldJoinBurstCluster } from "../lib/realtime/burst-clustering";
 
 async function activeRecordingParticipants(ctx: MutationCtx, sessionId: Id<"sessions">, now: number) {
   const participants = await ctx.db
@@ -63,7 +63,6 @@ export const trigger = mutation({
     let burstId;
     if (shouldJoinBurstCluster(latest, now)) {
       burstId = latest!._id;
-      const anchor = mergedBurstAnchor(latest!.anchorServerMs, now, latest!.markerCount);
       const initiators = latest!.initiatorParticipantIds.includes(participant._id)
         ? latest!.initiatorParticipantIds
         : [...latest!.initiatorParticipantIds, participant._id];
@@ -82,9 +81,8 @@ export const trigger = mutation({
         });
       }
       await ctx.db.patch(burstId, {
-        anchorServerMs: anchor,
-        windowStartServerMs: anchor - BURST_WINDOW_BEFORE_MS,
-        windowEndServerMs: anchor + BURST_WINDOW_AFTER_MS,
+        // Once phones receive a Burst window it is immutable. Later taps join
+        // the shared moment without moving the cue underneath earlier cameras.
         contributionDeadlineMs: Math.min(
           latest!.createdAt + 12_000,
           Math.max(latest!.contributionDeadlineMs, now + BURST_CONTRIBUTION_DEADLINE_MS),
@@ -105,6 +103,7 @@ export const trigger = mutation({
         expectedParticipantIds: active.map((camera) => camera._id),
         markerCount: 1,
         readyContributionCount: 0,
+        acknowledgedContributionCount: 0,
         status: "collecting",
         createdAt: now,
         updatedAt: now,
@@ -153,17 +152,36 @@ export const acknowledgePreserved = mutation({
     if (!contribution) {
       throw new ConvexError({ code: "NOT_REQUESTED", message: "This camera was not part of the Burst." });
     }
-    if (args.preservedEndMs <= args.preservedStartMs) {
+    if (args.preservedEndMs <= args.preservedStartMs || args.preservedEndMs - args.preservedStartMs > 15_000) {
       throw new ConvexError({ code: "INVALID_WINDOW", message: "Preserved Burst window is invalid." });
     }
+    const alreadyAcknowledged = contribution.status === "preserved" || contribution.status === "uploading" || contribution.status === "ready";
+    if (alreadyAcknowledged) {
+      return { contributionId: contribution._id, duplicate: true };
+    }
+    const burst = await ctx.db.get(args.burstId);
+    if (!burst || burst.sessionId !== participant.sessionId) {
+      throw new ConvexError({ code: "BURST_NOT_FOUND", message: "Burst does not belong to this session." });
+    }
+    const acknowledgedContributionCount = (burst.acknowledgedContributionCount ?? 0) + 1;
+    const previewThreshold = Math.min(3, burst.expectedParticipantIds.length);
+    const nextBurstStatus =
+      burst.status === "collecting" && acknowledgedContributionCount >= previewThreshold
+        ? "preview_ready" as const
+        : burst.status;
     await ctx.db.patch(contribution._id, {
-      status: contribution.status === "ready" ? "ready" : "preserved",
+      status: "preserved",
       preservedStartMs: args.preservedStartMs,
       preservedEndMs: args.preservedEndMs,
       captureSkewMs: args.captureSkewMs,
       updatedAt: Date.now(),
     });
-    return { contributionId: contribution._id };
+    await ctx.db.patch(burst._id, {
+      acknowledgedContributionCount,
+      status: nextBurstStatus,
+      updatedAt: Date.now(),
+    });
+    return { contributionId: contribution._id, duplicate: false, acknowledgedContributionCount };
   },
 });
 

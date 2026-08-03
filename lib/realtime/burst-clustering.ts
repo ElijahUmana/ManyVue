@@ -14,7 +14,7 @@ export function shouldJoinBurstCluster(
   markerServerMs: number,
   clusterWindowMs = BURST_CLUSTER_WINDOW_MS,
 ): boolean {
-  if (!candidate || candidate.status !== "collecting") return false;
+  if (!candidate || (candidate.status !== "collecting" && candidate.status !== "preview_ready")) return false;
   return Math.abs(candidate.anchorServerMs - markerServerMs) <= clusterWindowMs;
 }
 
@@ -26,4 +26,3 @@ export function mergedBurstAnchor(
   const count = Math.max(1, markerCountBeforeInsert);
   return Math.round((currentAnchorMs * count + markerServerMs) / (count + 1));
 }
-
