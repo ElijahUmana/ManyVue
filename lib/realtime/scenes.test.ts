@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateSceneRecipe } from "./scenes";
+import { normalizeSceneCutAt, validateSceneRecipe } from "./scenes";
 
 test("accepts a properly scheduled duo", () => {
   assert.equal(
@@ -47,3 +47,8 @@ test("rejects cuts that clients cannot receive in time", () => {
   );
 });
 
+test("server normalizes a late or clock-skewed cut into a visible near-future TAKE", () => {
+  assert.equal(normalizeSceneCutAt(1_100, 1_000), 1_600);
+  assert.equal(normalizeSceneCutAt(99_000, 1_000), 1_600);
+  assert.equal(normalizeSceneCutAt(1_700, 1_000), 1_700);
+});

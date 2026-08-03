@@ -23,7 +23,7 @@ export interface EditCandidate {
   id: string;
   cameraId: string;
   clipUrl: string;
-  contactSheetUrl: string;
+  contactSheetUrl?: string;
   availableDurationMs: number;
   burstOffsetMs: number;
   qualityScore: number;
@@ -153,9 +153,11 @@ export function validateEditRecipeInput(value: unknown): ValidationResult<EditRe
       if (typeof id !== "string" || !idPattern.test(id)) errors.push(`${prefix}.id is invalid`);
       if (typeof cameraId !== "string" || !idPattern.test(cameraId)) errors.push(`${prefix}.cameraId is invalid`);
       if (!isHttpsUrl(candidate.clipUrl)) errors.push(`${prefix}.clipUrl must be HTTPS`);
-      if (!isHttpsUrl(candidate.contactSheetUrl)) errors.push(`${prefix}.contactSheetUrl must be HTTPS`);
-      if (!isFiniteNumber(availableDurationMs) || availableDurationMs < 5_000 || availableDurationMs > 120_000) {
-        errors.push(`${prefix}.availableDurationMs must be from 5000 through 120000`);
+      if (candidate.contactSheetUrl !== undefined && !isHttpsUrl(candidate.contactSheetUrl)) {
+        errors.push(`${prefix}.contactSheetUrl must be HTTPS when supplied`);
+      }
+      if (!isFiniteNumber(availableDurationMs) || availableDurationMs < 3_000 || availableDurationMs > 120_000) {
+        errors.push(`${prefix}.availableDurationMs must be from 3000 through 120000`);
       }
       if (!isFiniteNumber(burstOffsetMs) || burstOffsetMs < 0 || (isFiniteNumber(availableDurationMs) && burstOffsetMs > availableDurationMs)) {
         errors.push(`${prefix}.burstOffsetMs is outside its source clip`);
@@ -175,7 +177,6 @@ export function validateEditRecipeInput(value: unknown): ValidationResult<EditRe
         typeof id === "string" &&
         typeof cameraId === "string" &&
         isHttpsUrl(candidate.clipUrl) &&
-        isHttpsUrl(candidate.contactSheetUrl) &&
         isFiniteNumber(availableDurationMs) &&
         isFiniteNumber(burstOffsetMs) &&
         isFiniteNumber(qualityScore)
@@ -184,7 +185,7 @@ export function validateEditRecipeInput(value: unknown): ValidationResult<EditRe
           id,
           cameraId,
           clipUrl: candidate.clipUrl,
-          contactSheetUrl: candidate.contactSheetUrl,
+          ...(isHttpsUrl(candidate.contactSheetUrl) ? { contactSheetUrl: candidate.contactSheetUrl } : {}),
           availableDurationMs,
           burstOffsetMs,
           qualityScore,

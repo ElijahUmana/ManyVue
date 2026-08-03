@@ -5,6 +5,19 @@ import { assetKind } from "./validators";
 
 const participantKinds = new Set(["original_clip", "burst_clip", "burst_frame"]);
 
+function requireHttpsAssetUrl(value: string, field: string): string {
+  if (value.length > 2_048) {
+    throw new ConvexError({ code: "INVALID_EXTERNAL_ASSET", message: `${field} is too long.` });
+  }
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") throw new Error("not HTTPS");
+    return url.toString();
+  } catch {
+    throw new ConvexError({ code: "INVALID_EXTERNAL_ASSET", message: `${field} must be a valid HTTPS URL.` });
+  }
+}
+
 export const createParticipantUpload = mutation({
   args: {
     participantId: v.id("participants"),
@@ -119,7 +132,10 @@ export const completeParticipantUpload = mutation({
           const previewThreshold = Math.min(3, burst.expectedParticipantIds.length);
           await ctx.db.patch(burst._id, {
             readyContributionCount,
-            status: readyContributionCount >= previewThreshold ? "preview_ready" : burst.status,
+            status:
+              burst.status === "collecting" && readyContributionCount >= previewThreshold
+                ? "preview_ready"
+                : burst.status,
             updatedAt: now,
           });
         }
@@ -129,6 +145,161 @@ export const completeParticipantUpload = mutation({
       await ctx.db.patch(participant._id, { recordingState: "ready", lastSeenAt: now });
     }
     return { assetId: asset._id, duplicate: false };
+  },
+});
+
+/**
+ * Sites stores immediately captured Burst microclips in R2 so Shotstack can
+ * fetch them over HTTPS. This authenticated mutation mirrors that real asset
+ * into Convex and advances the requested contribution exactly once.
+ */
+export const registerExternalBurstUpload = mutation({
+  args: {
+    participantId: v.id("participants"),
+    participantCapability: v.string(),
+    burstId: v.id("bursts"),
+    clientAssetId: v.string(),
+    clipUrl: v.string(),
+    thumbnailUrl: v.optional(v.string()),
+    mimeType: v.string(),
+    byteLength: v.number(),
+    durationMs: v.number(),
+    startsAtServerMs: v.number(),
+    endsAtServerMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await assertParticipant(ctx, args.participantId, args.participantCapability);
+    if (!/^[a-zA-Z0-9_-]{8,160}$/u.test(args.clientAssetId)) {
+      throw new ConvexError({ code: "INVALID_ASSET_ID", message: "A stable Burst asset ID is required." });
+    }
+    if (!Number.isSafeInteger(args.byteLength) || args.byteLength <= 0) {
+      throw new ConvexError({ code: "INVALID_ASSET", message: "The Burst microclip must contain bytes." });
+    }
+    if (!Number.isFinite(args.durationMs) || args.durationMs < 500 || args.durationMs > 20_000) {
+      throw new ConvexError({ code: "INVALID_ASSET", message: "Burst duration must be between 0.5 and 20 seconds." });
+    }
+    if (
+      !Number.isFinite(args.startsAtServerMs) ||
+      !Number.isFinite(args.endsAtServerMs) ||
+      args.endsAtServerMs <= args.startsAtServerMs
+    ) {
+      throw new ConvexError({ code: "INVALID_ASSET", message: "Burst server timestamps are invalid." });
+    }
+    const clipUrl = requireHttpsAssetUrl(args.clipUrl, "clipUrl");
+    const thumbnailUrl = args.thumbnailUrl
+      ? requireHttpsAssetUrl(args.thumbnailUrl, "thumbnailUrl")
+      : undefined;
+    const burst = await ctx.db.get(args.burstId);
+    if (!burst || burst.sessionId !== participant.sessionId) {
+      throw new ConvexError({ code: "BURST_NOT_FOUND", message: "Burst does not belong to this camera session." });
+    }
+    if (!burst.expectedParticipantIds.some((id) => id === participant._id)) {
+      throw new ConvexError({ code: "NOT_REQUESTED", message: "This camera was not requested for the Burst." });
+    }
+    const contribution = await ctx.db
+      .query("burstContributions")
+      .withIndex("by_burst_participant", (q) =>
+        q.eq("burstId", burst._id).eq("participantId", participant._id),
+      )
+      .unique();
+    if (!contribution) {
+      throw new ConvexError({ code: "NOT_REQUESTED", message: "The Burst contribution record is missing." });
+    }
+
+    const clipClientAssetId = `${args.clientAssetId}-clip`;
+    const existingClip = await ctx.db
+      .query("assets")
+      .withIndex("by_participant_client_asset", (q) =>
+        q.eq("participantId", participant._id).eq("clientAssetId", clipClientAssetId),
+      )
+      .unique();
+    if (existingClip?.externalUrl && existingClip.externalUrl !== clipUrl) {
+      throw new ConvexError({ code: "IDEMPOTENCY_CONFLICT", message: "Burst asset ID already points to another clip." });
+    }
+    const now = Date.now();
+    const clipAssetId = existingClip?._id ?? await ctx.db.insert("assets", {
+      sessionId: participant.sessionId,
+      participantId: participant._id,
+      burstId: burst._id,
+      clientAssetId: clipClientAssetId,
+      kind: "burst_clip",
+      status: "ready",
+      externalUrl: clipUrl,
+      mimeType: args.mimeType.slice(0, 160),
+      byteLength: args.byteLength,
+      durationMs: Math.round(args.durationMs),
+      startsAtServerMs: Math.round(args.startsAtServerMs),
+      endsAtServerMs: Math.round(args.endsAtServerMs),
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (existingClip) {
+      await ctx.db.patch(existingClip._id, {
+        status: "ready",
+        externalUrl: clipUrl,
+        mimeType: args.mimeType.slice(0, 160),
+        byteLength: args.byteLength,
+        durationMs: Math.round(args.durationMs),
+        startsAtServerMs: Math.round(args.startsAtServerMs),
+        endsAtServerMs: Math.round(args.endsAtServerMs),
+        updatedAt: now,
+      });
+    }
+
+    let thumbnailAssetId;
+    if (thumbnailUrl) {
+      const frameClientAssetId = `${args.clientAssetId}-frame`;
+      const existingFrame = await ctx.db
+        .query("assets")
+        .withIndex("by_participant_client_asset", (q) =>
+          q.eq("participantId", participant._id).eq("clientAssetId", frameClientAssetId),
+        )
+        .unique();
+      if (existingFrame?.externalUrl && existingFrame.externalUrl !== thumbnailUrl) {
+        throw new ConvexError({ code: "IDEMPOTENCY_CONFLICT", message: "Burst asset ID already points to another frame." });
+      }
+      thumbnailAssetId = existingFrame?._id ?? await ctx.db.insert("assets", {
+        sessionId: participant.sessionId,
+        participantId: participant._id,
+        burstId: burst._id,
+        clientAssetId: frameClientAssetId,
+        kind: "burst_frame",
+        status: "ready",
+        externalUrl: thumbnailUrl,
+        mimeType: "image/jpeg",
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (existingFrame) {
+        await ctx.db.patch(existingFrame._id, {
+          status: "ready",
+          externalUrl: thumbnailUrl,
+          mimeType: "image/jpeg",
+          updatedAt: now,
+        });
+      }
+    }
+
+    const duplicate = contribution.status === "ready";
+    if (!duplicate) {
+      await ctx.db.patch(contribution._id, {
+        status: "ready",
+        assetId: clipAssetId,
+        failureReason: undefined,
+        updatedAt: now,
+      });
+      const readyContributionCount = burst.readyContributionCount + 1;
+      const previewThreshold = Math.min(3, burst.expectedParticipantIds.length);
+      await ctx.db.patch(burst._id, {
+        readyContributionCount,
+        status:
+          burst.status === "collecting" && readyContributionCount >= previewThreshold
+            ? "preview_ready"
+            : burst.status,
+        updatedAt: now,
+      });
+    }
+    return { clipAssetId, thumbnailAssetId, duplicate };
   },
 });
 

@@ -45,7 +45,7 @@ function buildVisionContent(input: EditRecipeInput): Array<Record<string, unknow
         `Artifact: ${input.artifactId}`,
         `Owner camera: ${input.ownerCameraId}`,
         `Exact output duration: ${input.durationMs}ms`,
-        "Each following image is a low-resolution contact sheet from one real source clip.",
+        "When a source includes a following image, it is a low-resolution contact sheet from that real source clip.",
         "Use only supplied source IDs. Preserve a gapless timeline. Open and close on the owner's source.",
       ].join("\n"),
     },
@@ -64,7 +64,9 @@ function buildVisionContent(input: EditRecipeInput): Array<Record<string, unknow
         roleHint: candidate.roleHint ?? null,
       }),
     });
-    content.push({ type: "input_image", image_url: candidate.contactSheetUrl, detail: "low" });
+    if (candidate.contactSheetUrl) {
+      content.push({ type: "input_image", image_url: candidate.contactSheetUrl, detail: "low" });
+    }
   }
   return content;
 }
@@ -226,4 +228,3 @@ export async function planCrowdCutEdit(
     return { state: "degraded", provider: "deterministic", model, reason: readableError(error), fallbackRecipe };
   }
 }
-

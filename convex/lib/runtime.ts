@@ -1,7 +1,11 @@
 import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { PRESENCE_STALE_AFTER_MS } from "../../lib/realtime/constants";
+import {
+  isRecoverableControlCamera,
+  isStrictlyLiveCamera,
+  type CameraPresence,
+} from "../../lib/realtime/presence";
 
 type ReadCtx = Pick<QueryCtx, "db"> | Pick<MutationCtx, "db">;
 
@@ -17,24 +21,17 @@ export async function requireSessionBySlug(ctx: ReadCtx, slug: string) {
 }
 
 export function participantIsLiveCamera(
-  participant: {
-    connectionState: "online" | "degraded" | "offline";
-    recordingState: "idle" | "recording" | "uploading" | "ready" | "error";
-    lastSeenAt: number;
-    leftAt?: number;
-    mediaHealth?: { blocked: boolean; frozen: boolean; dark: boolean };
-  },
+  participant: CameraPresence,
   nowMs: number,
 ): boolean {
-  return (
-    participant.recordingState === "recording" &&
-    participant.connectionState !== "offline" &&
-    participant.leftAt === undefined &&
-    nowMs - participant.lastSeenAt <= PRESENCE_STALE_AFTER_MS &&
-    participant.mediaHealth?.blocked !== true &&
-    participant.mediaHealth?.frozen !== true &&
-    participant.mediaHealth?.dark !== true
-  );
+  return isStrictlyLiveCamera(participant, nowMs);
+}
+
+export function participantCanReceiveScheduledControl(
+  participant: CameraPresence,
+  nowMs: number,
+): boolean {
+  return isRecoverableControlCamera(participant, nowMs);
 }
 
 export async function assertParticipantsBelongToSession(
@@ -51,4 +48,3 @@ export async function assertParticipantsBelongToSession(
   }
   return participants;
 }
-

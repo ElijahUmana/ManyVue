@@ -5,11 +5,12 @@ import type { MutationCtx } from "./_generated/server";
 import { assertHost, assertParticipant, publicParticipant, publicSession } from "./lib/capabilities";
 import {
   assertParticipantsBelongToSession,
+  participantCanReceiveScheduledControl,
   participantIsLiveCamera,
   requireSessionBySlug,
 } from "./lib/runtime";
 import { sceneLayout, sceneSource } from "./validators";
-import { validateSceneRecipe } from "../lib/realtime/scenes";
+import { normalizeSceneCutAt, validateSceneRecipe } from "../lib/realtime/scenes";
 import { planAutomaticScene } from "../lib/realtime/autodirector";
 
 async function commitScene(
@@ -32,15 +33,16 @@ async function commitScene(
     .unique();
   if (existing) return existing;
   const now = Date.now();
+  const cutAtServerMs = normalizeSceneCutAt(args.cutAtServerMs, now);
   const validationError = validateSceneRecipe({
     layout: args.layout,
     activeParticipantIds: args.activeParticipantIds.map(String),
-    cutAtServerMs: args.cutAtServerMs,
+    cutAtServerMs,
     nowMs: now,
   });
   if (validationError) throw new ConvexError({ code: "INVALID_SCENE", message: validationError });
   const participants = await assertParticipantsBelongToSession(ctx, session._id, args.activeParticipantIds);
-  if (participants.some((participant) => !participantIsLiveCamera(participant!, now))) {
+  if (participants.some((participant) => !participantCanReceiveScheduledControl(participant!, now))) {
     throw new ConvexError({
       code: "CAMERA_UNAVAILABLE",
       message: "Every selected camera must be recording, connected, recent, and usable.",
@@ -52,7 +54,7 @@ async function commitScene(
     revision,
     layout: args.layout,
     activeParticipantIds: args.activeParticipantIds,
-    cutAtServerMs: args.cutAtServerMs,
+    cutAtServerMs,
     source: args.source,
     reason: args.reason?.trim().slice(0, 240),
     idempotencyKey: args.idempotencyKey,
@@ -111,7 +113,13 @@ export const scheduleAutoScene = mutation({
       .query("participants")
       .withIndex("by_session", (q) => q.eq("sessionId", session._id))
       .collect();
-    const live = participants.filter((participant) => participantIsLiveCamera(participant, now));
+    const strictLive = participants.filter((participant) => participantIsLiveCamera(participant, now));
+    // AUTO normally uses strict heartbeat state. If every visible recording
+    // camera was just expired by timer throttling, make one bounded recovery
+    // attempt instead of leaving the AUTO button apparently inert.
+    const live = strictLive.length
+      ? strictLive
+      : participants.filter((participant) => participantCanReceiveScheduledControl(participant, now));
     const previous = session.currentSceneId ? await ctx.db.get(session.currentSceneId) : null;
     const plan = planAutomaticScene({
       cameras: live.map((camera) => ({
@@ -152,21 +160,30 @@ export const programState = query({
       .withIndex("by_session_anchor", (q) => q.eq("sessionId", session._id))
       .order("desc")
       .first();
+    const actionableBurst =
+      latestBurst && now <= latestBurst.contributionDeadlineMs + 5_000 ? latestBurst : null;
     return {
       serverNowMs: now,
       session: publicSession(session),
       scene,
       liveCameras: participants.filter((participant) => participantIsLiveCamera(participant, now)).map(publicParticipant),
-      latestBurst: latestBurst
+      latestBurst: actionableBurst
         ? {
-            _id: latestBurst._id,
-            anchorServerMs: latestBurst.anchorServerMs,
-            windowStartServerMs: latestBurst.windowStartServerMs,
-            windowEndServerMs: latestBurst.windowEndServerMs,
-            expectedParticipantIds: latestBurst.expectedParticipantIds,
-            readyContributionCount: latestBurst.readyContributionCount,
-            acknowledgedContributionCount: latestBurst.acknowledgedContributionCount ?? 0,
-            status: latestBurst.status,
+            _id: actionableBurst._id,
+            anchorServerMs: actionableBurst.anchorServerMs,
+            windowStartServerMs: actionableBurst.windowStartServerMs,
+            windowEndServerMs: actionableBurst.windowEndServerMs,
+            expectedParticipantIds: actionableBurst.expectedParticipantIds,
+            // Existing clients use readyContributionCount for the live Burst
+            // counter. A preserved rolling buffer is ready for the realtime
+            // preview even before its high-quality upload completes.
+            readyContributionCount: Math.max(
+              actionableBurst.readyContributionCount,
+              actionableBurst.acknowledgedContributionCount ?? 0,
+            ),
+            uploadedReadyContributionCount: actionableBurst.readyContributionCount,
+            acknowledgedContributionCount: actionableBurst.acknowledgedContributionCount ?? 0,
+            status: actionableBurst.status,
           }
         : null,
     };

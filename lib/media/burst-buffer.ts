@@ -33,8 +33,11 @@ export class RollingBurstBuffer {
    * that has not happened yet. The pre-roll is already durable in IndexedDB.
    */
   async capture(input: BurstMarkerInput): Promise<BurstCapture> {
-    const preRollMs = input.preRollMs ?? 2_000;
-    const postRollMs = input.postRollMs ?? 3_000;
+    // Four seconds keeps an immediate real Burst below the production ingress
+    // ceiling at the camera recorder's 1 Mbps Burst bitrate while retaining
+    // both anticipation and reaction around the shared cue.
+    const preRollMs = input.preRollMs ?? 1_500;
+    const postRollMs = input.postRollMs ?? 2_500;
     const localMomentMs =
       input.localMomentMs ?? this.clock.serverToLocal(input.serverMomentMs);
     const marker: StoredBurstMarker = {

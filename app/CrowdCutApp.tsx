@@ -6,7 +6,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Room as LiveRoom } from "livekit-client";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { DurableMediaRecorder } from "@/lib/media";
+import { burstEditCandidates, listBurstAssets, uploadBurstCaptureAssets } from "@/lib/artifacts/burst-upload";
+import { DurableMediaRecorder, RollingBurstBuffer } from "@/lib/media";
+import { probeVideoDurationMs, tryCreateContactSheet } from "@/lib/media/video-artifact";
 
 type Feed = {
   id: string;
@@ -19,7 +21,17 @@ type Feed = {
 
 type SceneLayout = "hero" | "duo" | "sweep";
 type StageAngle = "LEFT" | "CENTER" | "RIGHT";
+type BurstPhase = "idle" | "countdown" | "capturing" | "preview" | "preserved";
+type ArtifactPhase = "idle" | "saved" | "uploading" | "waiting" | "editing" | "rendering" | "ready" | "failed";
 type HostSession = { sessionId: string; slug: string; hostCapability: string };
+type SharedBurstState = {
+  _id: Id<"bursts">;
+  anchorServerMs: number;
+  windowStartServerMs: number;
+  windowEndServerMs: number;
+  expectedParticipantIds: Id<"participants">[];
+  readyContributionCount: number;
+};
 
 type Scene = {
   layout: SceneLayout;
@@ -32,15 +44,16 @@ type Scene = {
 
 type WireMessage =
   | { type: "scene"; scene: Scene }
+  | { type: "burst_countdown"; by: string; at: number }
   | { type: "burst_request"; by: string; at: number; id: string }
   | { type: "burst_caught"; id: string; count: number }
-  | { type: "master_audio"; url: string }
   | { type: "session_state"; state: "live" | "ended" };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const STAGE_ANGLES: StageAngle[] = ["LEFT", "CENTER", "RIGHT"];
 const ANGLE_RANK: Record<StageAngle, number> = { LEFT: 0, CENTER: 1, RIGHT: 2 };
+const SWEEP_STAGGER_MS = 420;
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -144,65 +157,6 @@ function stageAwareDirectorScene(feeds: Feed[], step: number): {
   }
 }
 
-async function videoDurationMs(blob: Blob): Promise<number> {
-  const url = URL.createObjectURL(blob);
-  try {
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    video.src = url;
-    await new Promise<void>((resolve, reject) => {
-      video.onloadedmetadata = () => resolve();
-      video.onerror = () => reject(new Error("The recorded clip could not be read."));
-    });
-    return Math.round(video.duration * 1000);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-async function contactSheet(blob: Blob, burstOffsetMs: number): Promise<Blob> {
-  const url = URL.createObjectURL(blob);
-  try {
-    const video = document.createElement("video");
-    video.preload = "auto";
-    video.muted = true;
-    video.playsInline = true;
-    video.src = url;
-    await new Promise<void>((resolve, reject) => {
-      video.onloadedmetadata = () => resolve();
-      video.onerror = () => reject(new Error("A contact frame could not be extracted."));
-    });
-    const sourceWidth = video.videoWidth || 720;
-    const sourceHeight = video.videoHeight || 1280;
-    const frameWidth = 320;
-    const frameHeight = Math.max(180, Math.round(frameWidth * (sourceHeight / sourceWidth)));
-    const canvas = document.createElement("canvas");
-    canvas.width = frameWidth * 3;
-    canvas.height = frameHeight;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Contact sheet canvas is unavailable.");
-    const durationSeconds = Number.isFinite(video.duration) ? video.duration : 0;
-    const centerSeconds = Math.max(0, Math.min(durationSeconds, burstOffsetMs / 1_000));
-    const timestamps = [-1.5, 0, 1.5].map((offset) =>
-      Math.max(0, Math.min(Math.max(0, durationSeconds - 0.05), centerSeconds + offset)),
-    );
-    for (let index = 0; index < timestamps.length; index += 1) {
-      const timestamp = timestamps[index];
-      if (Math.abs(video.currentTime - timestamp) > 0.01) {
-        await new Promise<void>((resolve, reject) => {
-          video.onseeked = () => resolve();
-          video.onerror = () => reject(new Error("A contact sheet frame could not be decoded."));
-          video.currentTime = timestamp;
-        });
-      }
-      context.drawImage(video, index * frameWidth, 0, frameWidth, frameHeight);
-    }
-    return await new Promise<Blob>((resolve, reject) => canvas.toBlob((frame) => frame ? resolve(frame) : reject(new Error("Frame encoding failed.")), "image/jpeg", .78));
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
 function FeedVideo({ feed, muted = true }: { feed: Feed; muted?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
 
@@ -247,6 +201,57 @@ function StatusPill({ tone, children }: { tone: "live" | "ready" | "warn"; child
   return <span className={`status-pill ${tone}`}><i aria-hidden="true" />{children}</span>;
 }
 
+function BurstExperience({
+  phase,
+  countdown,
+  count,
+  total,
+  feeds = [],
+}: {
+  phase: BurstPhase;
+  countdown: number;
+  count: number;
+  total: number;
+  feeds?: Feed[];
+}) {
+  if (!(["countdown", "capturing", "preview"] as BurstPhase[]).includes(phase)) return null;
+  const locked = Math.max(count, phase === "preview" ? Math.min(total, feeds.length) : 0);
+  const progress = total ? Math.max(12, Math.min(100, (locked / total) * 100)) : phase === "capturing" ? 42 : 12;
+
+  return (
+    <div className={`burst-experience phase-${phase}`} role="status" aria-live="assertive">
+      <div className="burst-experience-copy">
+        <p className="eyebrow">SYNCHRONIZED CROWD CAPTURE</p>
+        {phase === "countdown" && <strong className="burst-countdown" key={countdown}>{Math.max(1, countdown)}</strong>}
+        {phase === "capturing" && <strong>LOCKING THE MOMENT</strong>}
+        {phase === "preview" && <strong>MULTI-ANGLE PREVIEW</strong>}
+        <span>
+          {phase === "countdown"
+            ? "Keep every camera rolling"
+            : phase === "capturing"
+              ? "Preserving the same instant across every live phone"
+              : `${Math.max(locked, 1)} real ${Math.max(locked, 1) === 1 ? "angle" : "angles"} locked to one moment`}
+        </span>
+        {phase !== "countdown" && (
+          <div className="burst-capture-progress" aria-label={`${locked} of ${Math.max(total, 1)} active angles locked`}>
+            <i style={{ width: `${progress}%` }} />
+          </div>
+        )}
+      </div>
+      {phase === "preview" && feeds.length > 0 && (
+        <div className="burst-angle-preview" aria-label="Synchronized angle preview">
+          {feeds.slice(0, 6).map((feed) => (
+            <div className={`burst-angle-tile angle-${feed.angle.toLowerCase()}`} key={feed.id}>
+              <FeedVideo feed={feed} />
+              <b>{feed.angle}</b>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CrowdCutApp() {
   const [booted, setBooted] = useState(false);
   const [view, setView] = useState<"program" | "camera">("program");
@@ -259,7 +264,7 @@ export default function CrowdCutApp() {
   const [hostCapability, setHostCapability] = useState("");
   const [qr, setQr] = useState("");
   const [joinUrl, setJoinUrl] = useState("");
-  const [joinExpanded, setJoinExpanded] = useState(true);
+  const [joinExpanded, setJoinExpanded] = useState(false);
   const [joinCopied, setJoinCopied] = useState(false);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [scene, setScene] = useState<Scene>({ layout: "hero", activeIds: [], cutAt: 0, revision: 0 });
@@ -267,29 +272,38 @@ export default function CrowdCutApp() {
   const [transportMessage, setTransportMessage] = useState("");
   const [showLive, setShowLive] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraViewMode, setCameraViewMode] = useState<"mine" | "live">("mine");
+  const [cameraStartedAt, setCameraStartedAt] = useState(0);
   const [recording, setRecording] = useState(false);
   const [selectedLive, setSelectedLive] = useState(false);
   const [burst, setBurst] = useState<{ id: string; at: number; count: number } | null>(null);
   const [ownedBurst, setOwnedBurst] = useState<{ id: string; at: number; count: number } | null>(null);
   const [burstPending, setBurstPending] = useState(false);
+  const [burstPhase, setBurstPhase] = useState<BurstPhase>("idle");
+  const [burstCountdown, setBurstCountdown] = useState(0);
+  const [burstCueAt, setBurstCueAt] = useState(0);
+  const [lastBurstCount, setLastBurstCount] = useState(0);
   const [clipUrl, setClipUrl] = useState("");
   const [uploadState, setUploadState] = useState<"idle" | "queued" | "uploading" | "uploaded" | "failed">("idle");
+  const [artifactPhase, setArtifactPhase] = useState<ArtifactPhase>("idle");
   const [artifactUrl, setArtifactUrl] = useState("");
   const [artifactMessage, setArtifactMessage] = useState("");
-  const [musicUrl, setMusicUrl] = useState("");
-  const [masterAudioUrl, setMasterAudioUrl] = useState("");
-  const [directorAuto, setDirectorAuto] = useState(true);
-  const [directorDecision, setDirectorDecision] = useState("WAITING FOR REAL ANGLES");
+  const [directorAuto, setDirectorAuto] = useState(false);
+  const [directorDecision, setDirectorDecision] = useState("MANUAL HOLD · START THE FILM, THEN TAKE A CAMERA");
   const [visionBusy, setVisionBusy] = useState(false);
+  const [programStarting, setProgramStarting] = useState(false);
+  const [hostPublishing, setHostPublishing] = useState(false);
   const [elapsed, setElapsed] = useState(0);
 
   const roomRef = useRef<LiveRoom | null>(null);
+  const participantIdRef = useRef("");
   const previewRef = useRef<HTMLVideoElement>(null);
   const recorderRef = useRef<DurableMediaRecorder | null>(null);
+  const burstRecorderRef = useRef<DurableMediaRecorder | null>(null);
+  const burstBufferRef = useRef<RollingBurstBuffer | null>(null);
+  const burstCaptureIdsRef = useRef(new Set<string>());
+  const burstCaptureHandlerRef = useRef<(sharedBurst: SharedBurstState) => void>(() => undefined);
   const channelRef = useRef<BroadcastChannel | null>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const burstRestoreRef = useRef<Scene | null>(null);
-  const musicFileRef = useRef<File | null>(null);
   const recordingStartedRef = useRef(0);
   const convexRef = useRef<ConvexClient | null>(null);
   const sequenceRef = useRef(0);
@@ -299,6 +313,8 @@ export default function CrowdCutApp() {
   const convexParticipantUnsubscribeRef = useRef<(() => void) | null>(null);
   const heartbeatRef = useRef<number | null>(null);
   const directorStepRef = useRef(0);
+  const feedsRef = useRef<Feed[]>([]);
+  const sweepTokenRef = useRef(0);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -314,6 +330,7 @@ export default function CrowdCutApp() {
       setView(nextView);
       setSessionId(nextSession);
       setParticipantId(stored);
+      participantIdRef.current = stored;
       setCameraAngle(initialAngle);
       setParticipantName(
         nextView === "program"
@@ -330,6 +347,28 @@ export default function CrowdCutApp() {
     setParticipantName(`${angle} · ${suffix}`);
     window.localStorage.setItem(`crowdcut-angle-${sessionId}`, angle);
   }, [participantId, participantName, sessionId]);
+
+  useEffect(() => {
+    feedsRef.current = feeds;
+  }, [feeds]);
+
+  useEffect(() => {
+    if (!burstCueAt) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((burstCueAt - Date.now()) / 1000));
+      setBurstCountdown(remaining);
+      if (remaining <= 0) setBurstPhase((current) => current === "countdown" ? "capturing" : current);
+    };
+    tick();
+    const timer = window.setInterval(tick, 120);
+    return () => window.clearInterval(timer);
+  }, [burstCueAt]);
+
+  useEffect(() => {
+    if (burstPhase !== "preview") return;
+    const timer = window.setTimeout(() => setBurstPhase("preserved"), 3800);
+    return () => window.clearTimeout(timer);
+  }, [burstPhase]);
 
   useEffect(() => {
     if (!sessionId || view !== "program" || !convexSessionId) return;
@@ -350,21 +389,29 @@ export default function CrowdCutApp() {
       const delay = Math.max(0, message.scene.cutAt - Date.now());
       window.setTimeout(() => {
         setScene(message.scene);
-        const mine = message.scene.activeIds.includes(participantId);
+        const mine = message.scene.activeIds.includes(participantIdRef.current);
         setSelectedLive(mine);
         if (mine && navigator.vibrate) navigator.vibrate(36);
       }, delay);
     }
+    if (message.type === "burst_countdown") {
+      setBurstCueAt(message.at);
+      setBurstCountdown(Math.max(1, Math.ceil((message.at - Date.now()) / 1000)));
+      setBurstPhase("countdown");
+      setLastBurstCount(0);
+    }
     if (message.type === "burst_request" && view === "program") {
       setBurst({ id: message.id, at: message.at, count: 0 });
+      setBurstPhase("preview");
     }
     if (message.type === "burst_caught") {
       setBurst((current) => current?.id === message.id ? { ...current, count: message.count } : current);
       setOwnedBurst((current) => current?.id === message.id ? { ...current, count: message.count } : current);
+      setLastBurstCount(message.count);
+      setBurstPhase("preview");
     }
-    if (message.type === "master_audio") setMasterAudioUrl(message.url);
     if (message.type === "session_state") setShowLive(message.state === "live");
-  }, [participantId, view]);
+  }, [view]);
 
   useEffect(() => {
     if (!booted || convexInitRef.current) return;
@@ -383,6 +430,7 @@ export default function CrowdCutApp() {
       unsubscribe?.();
       unsubscribe = client.onUpdate(api.director.programState, { sessionSlug: slug }, (state) => {
         if (cancelled) return;
+        setShowLive(state.session.status === "live");
         if (state.scene) {
           applyMessage({
             type: "scene",
@@ -406,6 +454,7 @@ export default function CrowdCutApp() {
           setBurst((current) => current?.id === sharedId
             ? { ...current, count: Math.max(current.count, sharedBurst.readyContributionCount) }
             : current);
+          setLastBurstCount((current) => Math.max(current, sharedBurst.readyContributionCount));
         }
         if (
           sharedBurst &&
@@ -418,6 +467,7 @@ export default function CrowdCutApp() {
             at: sharedBurst.anchorServerMs,
             count: sharedBurst.readyContributionCount,
           });
+          setBurstPhase("preview");
         }
       }, (error) => setTransportMessage(`Convex realtime error: ${error.message}`));
     };
@@ -459,6 +509,7 @@ export default function CrowdCutApp() {
       });
       if (cancelled) return;
       setParticipantId(String(joined.participantId));
+      participantIdRef.current = String(joined.participantId);
       setParticipantCapability(joined.participantCapability);
       window.localStorage.setItem("crowdcut-program-participant", JSON.stringify(joined));
       subscribe(host.slug);
@@ -514,30 +565,39 @@ export default function CrowdCutApp() {
   const ensureConvexCamera = useCallback(async () => {
     const client = convexRef.current;
     if (!client) return { id: participantId, capability: "", livekitIdentity: participantId };
-    if (participantCapability) {
-      return { id: participantId, capability: participantCapability, livekitIdentity: participantId };
+    let id = participantId;
+    let capability = participantCapability;
+    let livekitIdentity = participantId;
+    if (!capability) {
+      const joined = await client.action(api.participants.join, {
+        sessionSlug: sessionId,
+        displayName: participantName,
+        role: "attendee",
+        deviceInfo: { platform: navigator.platform, userAgent: navigator.userAgent },
+        shotMetadata: {
+          stageZone: cameraAngle.toLowerCase() as "left" | "center" | "right",
+          framing: "unknown",
+          confidence: 1,
+          source: "self_reported",
+        },
+      });
+      id = String(joined.participantId);
+      capability = joined.participantCapability;
+      livekitIdentity = joined.livekitIdentity;
+      setParticipantId(id);
+      participantIdRef.current = id;
+      setParticipantCapability(capability);
+      setConvexSessionId(String(joined.sessionId));
+      window.localStorage.setItem(`crowdcut-camera-${sessionId}`, JSON.stringify(joined));
     }
-    const joined = await client.action(api.participants.join, {
-      sessionSlug: sessionId,
-      displayName: participantName,
-      role: "attendee",
-      deviceInfo: { platform: navigator.platform, userAgent: navigator.userAgent },
-      shotMetadata: {
-        stageZone: cameraAngle.toLowerCase() as "left" | "center" | "right",
-        framing: "unknown",
-        confidence: 1,
-        source: "self_reported",
-      },
-    });
-    const id = String(joined.participantId);
-    const capability = joined.participantCapability;
-    setParticipantId(id);
-    setParticipantCapability(capability);
-    setConvexSessionId(String(joined.sessionId));
-    window.localStorage.setItem(`crowdcut-camera-${sessionId}`, JSON.stringify(joined));
+    const convexParticipantId = id as Id<"participants">;
 
+    // A stopped camera can record again without creating a duplicate person.
+    // Reattach realtime state and explicitly re-enter backend recording every
+    // time START MY ANGLE is pressed.
     convexParticipantUnsubscribeRef.current?.();
     convexParticipantUnsubscribeRef.current = client.onUpdate(api.director.programState, { sessionSlug: sessionId }, (state) => {
+      setShowLive(state.session.status === "live");
       if (state.scene) {
         applyMessage({
           type: "scene",
@@ -558,6 +618,7 @@ export default function CrowdCutApp() {
         setOwnedBurst((current) => current?.id === sharedId
           ? { ...current, count: Math.max(current.count, sharedBurst.readyContributionCount) }
           : current);
+        setLastBurstCount((current) => Math.max(current, sharedBurst.readyContributionCount));
       }
       if (
         sharedBurst &&
@@ -565,21 +626,12 @@ export default function CrowdCutApp() {
         sharedBurst.expectedParticipantIds.map(String).includes(id)
       ) {
         lastConvexBurstRef.current = String(sharedBurst._id);
-        setBurst({ id: String(sharedBurst._id), at: sharedBurst.anchorServerMs, count: sharedBurst.readyContributionCount });
-        const localStart = Math.max(0, sharedBurst.windowStartServerMs - recordingStartedRef.current);
-        const localEnd = Math.max(localStart + 1, sharedBurst.windowEndServerMs - recordingStartedRef.current);
-        void client.mutation(api.bursts.acknowledgePreserved, {
-          participantId: joined.participantId as Id<"participants">,
-          participantCapability: capability,
-          burstId: sharedBurst._id,
-          preservedStartMs: localStart,
-          preservedEndMs: localEnd,
-        });
+        burstCaptureHandlerRef.current(sharedBurst as SharedBurstState);
       }
     });
     sequenceRef.current += 1;
     await client.mutation(api.participants.beginRecording, {
-      participantId: joined.participantId as Id<"participants">,
+      participantId: convexParticipantId,
       participantCapability: capability,
       clientSequence: sequenceRef.current,
       deviceInfo: { platform: navigator.platform, userAgent: navigator.userAgent },
@@ -588,13 +640,13 @@ export default function CrowdCutApp() {
     heartbeatRef.current = window.setInterval(() => {
       sequenceRef.current += 1;
       void client.mutation(api.participants.heartbeat, {
-        participantId: joined.participantId as Id<"participants">,
+        participantId: convexParticipantId,
         participantCapability: capability,
         clientSequence: sequenceRef.current,
         connectionState: navigator.onLine ? "online" : "offline",
       });
     }, 5000);
-    return { id, capability, livekitIdentity: joined.livekitIdentity };
+    return { id, capability, livekitIdentity };
   }, [applyMessage, cameraAngle, participantCapability, participantId, participantName, sessionId]);
 
   const registerRoomListeners = useCallback(async (room: LiveRoom, role: "program" | "camera") => {
@@ -603,37 +655,35 @@ export default function CrowdCutApp() {
       try { applyMessage(JSON.parse(decoder.decode(payload)) as WireMessage); } catch { /* invalid packets are ignored */ }
     });
 
-    if (role === "program") {
-      const addTrack = (track: { kind: string; mediaStreamTrack: MediaStreamTrack }, participant: { identity: string; name?: string }) => {
-        if (track.kind !== livekit.Track.Kind.Video) return;
-        setFeeds((current) => {
-          const angle = inferStageAngle(participant.identity, participant.name);
-          const next: Feed = {
-            id: participant.identity,
-            angle,
-            label: shortCameraLabel(participant.identity, participant.name, angle),
-            stream: new MediaStream([track.mediaStreamTrack]),
-            joinedAt: Date.now(),
-          };
-          return [...current.filter((item) => item.id !== next.id), next];
-        });
-      };
-      room.on(livekit.RoomEvent.TrackSubscribed, (track, publication, participant) => {
-        if (track.kind !== livekit.Track.Kind.Video) return;
-        // This program view currently attaches the underlying MediaStreamTrack directly.
-        // Explicitly request the top simulcast layer so the full-screen film never gets
-        // stranded on LiveKit's thumbnail-quality adaptive layer.
-        publication.setVideoQuality(livekit.VideoQuality.HIGH);
-        publication.setVideoFPS(30);
-        addTrack(track, participant);
+    const addTrack = (track: { kind: string; mediaStreamTrack: MediaStreamTrack }, participant: { identity: string; name?: string }) => {
+      if (track.kind !== livekit.Track.Kind.Video || participant.identity === participantIdRef.current) return;
+      setFeeds((current) => {
+        const angle = inferStageAngle(participant.identity, participant.name);
+        const next: Feed = {
+          id: participant.identity,
+          angle,
+          label: shortCameraLabel(participant.identity, participant.name, angle),
+          stream: new MediaStream([track.mediaStreamTrack]),
+          joinedAt: current.find((item) => item.id === participant.identity)?.joinedAt ?? Date.now(),
+        };
+        return [...current.filter((item) => item.id !== next.id), next];
       });
-      room.on(livekit.RoomEvent.TrackUnsubscribed, (_track, _publication, participant) => {
-        setFeeds((current) => current.filter((feed) => feed.id !== participant.identity));
-      });
-      room.on(livekit.RoomEvent.ParticipantDisconnected, (participant) => {
-        setFeeds((current) => current.filter((feed) => feed.id !== participant.identity));
-      });
-    }
+    };
+    room.on(livekit.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (track.kind !== livekit.Track.Kind.Video) return;
+      // Program and camera clients both receive the real shared cut. The
+      // program requests full quality; camera clients retain adaptive quality
+      // for a responsive in-hand LIVE CUT monitor.
+      publication.setVideoQuality(role === "program" ? livekit.VideoQuality.HIGH : livekit.VideoQuality.MEDIUM);
+      publication.setVideoFPS(role === "program" ? 30 : 24);
+      addTrack(track, participant);
+    });
+    room.on(livekit.RoomEvent.TrackUnsubscribed, (_track, _publication, participant) => {
+      setFeeds((current) => current.filter((feed) => feed.id !== participant.identity));
+    });
+    room.on(livekit.RoomEvent.ParticipantDisconnected, (participant) => {
+      setFeeds((current) => current.filter((feed) => feed.id !== participant.identity));
+    });
   }, [applyMessage]);
 
   const connectTransport = useCallback(async (role: "program" | "camera", stream?: MediaStream, identityOverride?: string) => {
@@ -685,102 +735,41 @@ export default function CrowdCutApp() {
     }
   }, [participantId, participantName, registerRoomListeners, sessionId]);
 
-  const putAsset = useCallback(async (
-    file: File,
-    kind: string,
-    durationMs = 0,
-    burstOffsetMs = 0,
-    burstId?: string,
-  ) => {
-    const form = new FormData();
-    form.set("session", sessionId);
-    form.set("participant", participantId);
-    form.set("kind", kind);
-    form.set("durationMs", String(durationMs));
-    form.set("burstOffsetMs", String(burstOffsetMs));
-    if (burstId) form.set("burstId", burstId);
-    form.set("file", file);
-    const response = await fetch("/api/uploads", { method: "POST", body: form });
-    const result = await response.json() as { ok?: boolean; url?: string; error?: string };
-    if (!response.ok || !result.ok || !result.url) throw new Error(result.error || "Media upload failed");
-    return result.url;
-  }, [participantId, sessionId]);
-
-  const buildArtifact = useCallback(async () => {
-    if (!ownedBurst) {
+  const buildArtifact = useCallback(async (burstOverride?: { id: string; at: number; count: number }) => {
+    const targetBurst = burstOverride ?? ownedBurst;
+    if (!targetBurst) {
+      setArtifactPhase("saved");
       setArtifactMessage("Your original angle is safe. Tap Burst while recording to create a multi-angle cut.");
       return;
     }
     setUploadState("queued");
+    setArtifactPhase("waiting");
     setArtifactMessage(renderIdRef.current
       ? "Checking the production render…"
       : "Waiting for real crowd angles…");
     try {
       let renderId = renderIdRef.current;
       if (!renderId) {
-        type RemoteAsset = {
-          url: string;
-          uploaded: string;
-          metadata: Record<string, string>;
-        };
-        let assets: RemoteAsset[] = [];
-        let effectiveMasterAudioUrl = masterAudioUrl;
-        for (let attempt = 0; attempt < 15; attempt += 1) {
-          const listed = await fetch(`/api/uploads?list=1&session=${encodeURIComponent(sessionId)}`, { cache: "no-store" });
-          if (!listed.ok) throw new Error(`Uploaded media listing failed (${listed.status}).`);
-          const body = await listed.json() as { assets?: RemoteAsset[] };
-          assets = body.assets || [];
-          effectiveMasterAudioUrl ||= assets
-            .filter((asset) => asset.metadata.kind === "master-audio")
-            .sort((left, right) => right.uploaded.localeCompare(left.uploaded))[0]?.url || "";
-          const contributors = new Set(
-            assets
-              .filter((asset) => asset.metadata.kind === "burst-source" && asset.metadata.burstId === ownedBurst.id)
-              .map((asset) => asset.metadata.participant),
-          );
-          if (contributors.size >= 2) break;
+        let candidates = [] as ReturnType<typeof burstEditCandidates>;
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const assets = await listBurstAssets(sessionId, targetBurst.id);
+          candidates = burstEditCandidates(assets, participantId);
+          if (candidates.length >= 2 && candidates.some((candidate) => candidate.cameraId === participantId)) break;
           await wait(1_200);
         }
-
-        const grouped = new Map<string, { clip?: RemoteAsset; thumbnail?: RemoteAsset }>();
-        const burstAssets = assets
-          .filter((asset) => asset.metadata.burstId === ownedBurst.id)
-          .sort((left, right) => left.uploaded.localeCompare(right.uploaded));
-        for (const asset of burstAssets) {
-          const camera = asset.metadata.participant;
-          if (!camera) continue;
-          const current = grouped.get(camera) || {};
-          if (asset.metadata.kind === "burst-source") current.clip = asset;
-          if (asset.metadata.kind === "thumbnail") current.thumbnail = asset;
-          grouped.set(camera, current);
-        }
-        const candidates = [...grouped.entries()].flatMap(([cameraId, pair]) => {
-          const durationMs = Number(pair.clip?.metadata.durationMs || 0);
-          const burstOffsetMs = Number(pair.clip?.metadata.burstOffsetMs || 0);
-          if (!pair.clip || !pair.thumbnail || durationMs < 5_000 || burstOffsetMs < 0 || burstOffsetMs > durationMs) return [];
-          return [{
-            id: `${cameraId}-source`,
-            cameraId,
-            clipUrl: pair.clip.url,
-            contactSheetUrl: pair.thumbnail.url,
-            availableDurationMs: durationMs,
-            burstOffsetMs,
-            qualityScore: cameraId === participantId ? .92 : .82,
-          }];
-        });
         if (candidates.length < 2 || !candidates.some((candidate) => candidate.cameraId === participantId)) {
-          setArtifactMessage("Waiting for at least two uploaded Burst angles, including yours. Stop the other cameras, then tap Build again.");
+          setArtifactPhase("waiting");
+          setArtifactMessage("Your Burst angle is uploaded. Waiting for one more real camera — everyone can keep recording.");
           return;
         }
         const editInput = {
-          artifactId: `burst-${ownedBurst.id}`,
+          artifactId: `burst-${targetBurst.id}`,
           ownerCameraId: participantId,
-          durationMs: Math.min(12_000, Math.max(8_000, Math.min(...candidates.map((candidate) => candidate.availableDurationMs)))),
+          durationMs: 8_000,
           candidates,
         };
-        setArtifactMessage(effectiveMasterAudioUrl
-          ? "Choosing a truthful cut with the uploaded master track…"
-          : "Choosing a truthful cut with the phones’ real concert audio…");
+        setArtifactPhase("editing");
+        setArtifactMessage("AI is directing a personal cut from the real synchronized angles…");
         const plannedResponse = await fetch("/api/ai/edit-recipe", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -796,11 +785,12 @@ export default function CrowdCutApp() {
         const artifactResponse = await fetch("/api/artifacts/render", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ editInput, recipe, ...(effectiveMasterAudioUrl ? { masterAudioUrl: effectiveMasterAudioUrl } : {}) }),
+          body: JSON.stringify({ editInput, recipe }),
         });
         const queued = await artifactResponse.json() as { state?: string; renderId?: string; reason?: string; missing?: string[] };
         if (!artifactResponse.ok || queued.state !== "queued" || !queued.renderId) {
           setUploadState("failed");
+          setArtifactPhase("failed");
           setArtifactMessage(queued.reason || `Production renderer is not ready${queued.missing?.length ? `: ${queued.missing.join(", ")}` : "."}`);
           return;
         }
@@ -808,6 +798,7 @@ export default function CrowdCutApp() {
         renderIdRef.current = renderId;
       }
 
+      setArtifactPhase("rendering");
       setArtifactMessage("Rendering your real multi-angle CrowdCut…");
       for (let attempt = 0; attempt < 14; attempt += 1) {
         await wait(2_000);
@@ -824,6 +815,7 @@ export default function CrowdCutApp() {
         if (status.render?.status === "done" && status.render.url) {
           setArtifactUrl(status.render.url);
           setUploadState("uploaded");
+          setArtifactPhase("ready");
           setArtifactMessage("Your shareable CrowdCut is ready — every angle is real.");
           renderIdRef.current = "";
           return;
@@ -833,46 +825,93 @@ export default function CrowdCutApp() {
       setArtifactMessage("The production render is still processing. Tap Check render to continue watching it.");
     } catch (error) {
       setUploadState("failed");
+      setArtifactPhase("failed");
       setArtifactMessage(error instanceof Error ? error.message : "The cinematic render failed; your original remains safe.");
       renderIdRef.current = "";
     }
-  }, [masterAudioUrl, ownedBurst, participantId, sessionId]);
+  }, [ownedBurst, participantId, sessionId]);
 
-  const uploadClip = useCallback(async (blob: Blob) => {
+  const captureBurstContribution = useCallback(async (sharedBurst: SharedBurstState) => {
+    const sharedId = String(sharedBurst._id);
+    const marker = { id: sharedId, at: sharedBurst.anchorServerMs, count: sharedBurst.readyContributionCount };
+    setBurst(marker);
+    setOwnedBurst(marker);
+    if (burstCaptureIdsRef.current.has(sharedId)) return;
+    burstCaptureIdsRef.current.add(sharedId);
+    setBurstPhase("capturing");
     setUploadState("uploading");
-    setArtifactMessage("Uploading your real source recording…");
+    setArtifactPhase("uploading");
+    setArtifactMessage("Capturing and uploading this shared moment while every camera keeps filming…");
     try {
-      const durationMs = await videoDurationMs(blob);
-      const contributionBurst = ownedBurst ?? burst;
-      const burstOffsetMs = contributionBurst
-        ? Math.max(0, contributionBurst.at - recordingStartedRef.current)
-        : Math.floor(durationMs / 2);
-      const extension = blob.type.includes("mp4") ? "mp4" : "webm";
-      await putAsset(
-        new File([blob], `crowdcut-${participantId}.${extension}`, { type: blob.type }),
-        contributionBurst ? "burst-source" : "original",
-        durationMs,
-        burstOffsetMs,
-        contributionBurst?.id,
+      const buffer = burstBufferRef.current;
+      const client = convexRef.current;
+      if (!buffer || !client || !participantCapability || !participantId) {
+        throw new Error("This camera is not ready to preserve the Burst yet.");
+      }
+      const capture = await buffer.capture({
+        id: `marker-${sharedId}`,
+        participantId,
+        serverMomentMs: sharedBurst.anchorServerMs,
+        preRollMs: 1_500,
+        postRollMs: 2_500,
+      });
+      const elapsedMs = Math.max(1, capture.actualEndAtMs - capture.actualStartAtMs);
+      const probe = await probeVideoDurationMs(capture.blob, elapsedMs);
+      const burstOffsetMs = Math.min(
+        probe.durationMs,
+        Math.max(0, capture.marker.localMomentMs - capture.actualStartAtMs),
       );
-      const sheet = await contactSheet(blob, burstOffsetMs);
-      await putAsset(
-        new File([sheet], `crowdcut-${participantId}-contact-sheet.jpg`, { type: "image/jpeg" }),
-        "thumbnail",
-        durationMs,
+
+      await client.mutation(api.bursts.acknowledgePreserved, {
+        participantId: participantId as Id<"participants">,
+        participantCapability,
+        burstId: sharedBurst._id,
+        preservedStartMs: Math.max(0, capture.actualStartAtMs - recordingStartedRef.current),
+        preservedEndMs: Math.max(1, capture.actualEndAtMs - recordingStartedRef.current),
+      });
+
+      const sheet = await tryCreateContactSheet(capture.blob, burstOffsetMs);
+      const uploaded = await uploadBurstCaptureAssets({
+        session: sessionId,
+        participant: participantId,
+        burstId: sharedId,
+        clip: capture.blob,
+        thumbnail: sheet.ok ? sheet.blob : null,
+        durationMs: probe.durationMs,
         burstOffsetMs,
-        contributionBurst?.id,
-      );
+      });
+      const clientAssetId = `burst-${sharedId}-${participantId}`;
+      await client.mutation(api.assets.registerExternalBurstUpload, {
+        participantId: participantId as Id<"participants">,
+        participantCapability,
+        burstId: sharedBurst._id,
+        clientAssetId,
+        clipUrl: uploaded.clip.url,
+        ...(uploaded.thumbnail?.url ? { thumbnailUrl: uploaded.thumbnail.url } : {}),
+        mimeType: capture.blob.type || "video/webm",
+        byteLength: capture.blob.size,
+        durationMs: probe.durationMs,
+        startsAtServerMs: Math.round(sharedBurst.anchorServerMs + (capture.actualStartAtMs - capture.marker.localMomentMs)),
+        endsAtServerMs: Math.round(sharedBurst.anchorServerMs + (capture.actualEndAtMs - capture.marker.localMomentMs)),
+      });
       setUploadState("uploaded");
-      if (ownedBurst) await buildArtifact();
-      else setArtifactMessage(contributionBurst
-        ? "Your angle joined the real Crowd Burst. The initiator is assembling the shared cut."
-        : "Your original recording is uploaded and remains available on this device.");
+      setBurstPhase("preview");
+      setArtifactPhase("waiting");
+      setArtifactMessage(uploaded.thumbnailWarning
+        ? "Your real Burst clip is uploaded. Waiting for the other synchronized angles…"
+        : "Your angle is uploaded. Building your personal multi-angle CrowdCut…");
+      await buildArtifact(marker);
     } catch (error) {
       setUploadState("failed");
-      setArtifactMessage(error instanceof Error ? error.message : "Upload failed; your original remains safe on this device.");
+      setArtifactPhase("failed");
+      setArtifactMessage(error instanceof Error ? error.message : "Burst upload failed; your full original remains safe on this device.");
+      burstCaptureIdsRef.current.delete(sharedId);
     }
-  }, [buildArtifact, burst, ownedBurst, participantId, putAsset]);
+  }, [buildArtifact, participantCapability, participantId, sessionId]);
+
+  useEffect(() => {
+    burstCaptureHandlerRef.current = (sharedBurst) => { void captureBurstContribution(sharedBurst); };
+  }, [captureBurstContribution]);
 
   const startCamera = useCallback(async () => {
     setTransportMessage("Opening your angle…");
@@ -880,10 +919,12 @@ export default function CrowdCutApp() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
+          // Ask for the camera sensor's native 4:3 field of view. Forcing 9:16
+          // makes several mobile browsers crop the sensor before we ever see
+          // the track, which feels zoomed compared with the native camera app.
           width: { ideal: 1280 },
-          height: { ideal: 720 },
+          height: { ideal: 960 },
           frameRate: { ideal: 30, max: 30 },
-          aspectRatio: { ideal: 16 / 9 },
         },
         audio: { echoCancellation: true, noiseSuppression: true },
       });
@@ -901,9 +942,24 @@ export default function CrowdCutApp() {
         chunkDurationMs: 1000,
         videoBitsPerSecond: 4_000_000,
       });
+      const burstRecorder = new DurableMediaRecorder(stream, {
+        recordingId: crypto.randomUUID(),
+        participantId: convexCamera.id,
+        chunkDurationMs: 500,
+        videoBitsPerSecond: 1_000_000,
+        audioBitsPerSecond: 64_000,
+      });
       await recorder.start();
-      recordingStartedRef.current = Date.now();
+      await burstRecorder.start();
+      const startedAt = Date.now();
+      recordingStartedRef.current = startedAt;
+      setCameraStartedAt(startedAt);
       recorderRef.current = recorder;
+      burstRecorderRef.current = burstRecorder;
+      burstBufferRef.current = new RollingBurstBuffer(burstRecorder, {
+        serverToLocal: (serverMs) => serverMs,
+        localToServer: (localMs) => localMs,
+      });
       setRecording(true);
       await connectTransport("camera", stream, convexCamera.livekitIdentity);
     } catch (error) {
@@ -918,9 +974,14 @@ export default function CrowdCutApp() {
       const result = await recorder.stop();
       const localUrl = URL.createObjectURL(result.blob);
       setClipUrl((current) => { if (current) URL.revokeObjectURL(current); return localUrl; });
-      setUploadState("queued");
-      void uploadClip(result.blob);
+      setUploadState((current) => current === "idle" ? "queued" : current);
+      setArtifactPhase((current) => current === "idle" ? "saved" : current);
+      setArtifactMessage((current) => current || "Your complete original is saved on this device and ready to download.");
     }
+    const burstRecorder = burstRecorderRef.current;
+    if (burstRecorder?.state === "recording") await burstRecorder.stop().catch(() => undefined);
+    burstRecorderRef.current = null;
+    burstBufferRef.current = null;
     setRecording(false);
     setSelectedLive(false);
     if (convexRef.current && participantCapability) {
@@ -936,49 +997,64 @@ export default function CrowdCutApp() {
     await roomRef.current?.disconnect();
     roomRef.current = null;
     cameraStream?.getTracks().forEach((track) => track.stop());
-  }, [cameraStream, participantCapability, participantId, uploadClip]);
+  }, [cameraStream, participantCapability, participantId]);
 
   const triggerBurst = useCallback(async () => {
-    if (!recording || burstPending) return;
+    const hostCanCue = view === "program" && showLive && feedsRef.current.some((feed) => !feed.local);
+    if (burstPending || (view === "camera" && !recording) || (view === "program" && !hostCanCue)) return;
     setBurstPending(true);
     const markerId = crypto.randomUUID();
-    if (navigator.vibrate) navigator.vibrate([32, 24, 64]);
+    const cueAt = Date.now() + 2_700;
+    setBurstCueAt(cueAt);
+    setBurstCountdown(3);
+    setBurstPhase("countdown");
+    setLastBurstCount(0);
     try {
+      await send({ type: "burst_countdown", by: participantId, at: cueAt });
+      await wait(Math.max(0, cueAt - Date.now()));
+      setBurstPhase("capturing");
+      if (navigator.vibrate) navigator.vibrate([32, 24, 64]);
       if (convexRef.current && participantCapability) {
-        const result = await convexRef.current.mutation(api.bursts.trigger, {
-          participantId: participantId as Id<"participants">,
-          participantCapability,
-          clientMarkerId: markerId,
-          clientObservedAtMs: Date.now(),
-        });
+        const result = view === "program" && convexSessionId && hostCapability
+          ? await convexRef.current.mutation(api.bursts.triggerByHost, {
+              sessionId: convexSessionId as Id<"sessions">,
+              hostCapability,
+              actorParticipantId: participantId as Id<"participants">,
+              clientMarkerId: markerId,
+              clientObservedAtMs: Date.now(),
+            })
+          : await convexRef.current.mutation(api.bursts.trigger, {
+              participantId: participantId as Id<"participants">,
+              participantCapability,
+              clientMarkerId: markerId,
+              clientObservedAtMs: Date.now(),
+            });
         if (result.burst) {
           const marker = { id: String(result.burst._id), at: result.burst.anchorServerMs, count: result.burst.readyContributionCount };
           lastConvexBurstRef.current = marker.id;
           setBurst(marker);
-          setOwnedBurst(marker);
-          const localStart = Math.max(0, result.burst.windowStartServerMs - recordingStartedRef.current);
-          const localEnd = Math.max(localStart + 1, result.burst.windowEndServerMs - recordingStartedRef.current);
-          await convexRef.current.mutation(api.bursts.acknowledgePreserved, {
-            participantId: participantId as Id<"participants">,
-            participantCapability,
-            burstId: result.burst._id,
-            preservedStartMs: localStart,
-            preservedEndMs: localEnd,
-          });
+          setLastBurstCount(marker.count);
+          if (view === "camera") {
+            setOwnedBurst(marker);
+            burstCaptureHandlerRef.current(result.burst as SharedBurstState);
+          } else setBurstPhase("preview");
         }
         return;
       }
       const marker = { id: markerId, at: Date.now(), count: 1 };
       setBurst(marker);
       setOwnedBurst(marker);
+      setLastBurstCount(1);
+      setBurstPhase("preview");
       await send({ type: "burst_request", by: participantId, at: marker.at, id: marker.id });
     } catch (error) {
+      setBurstPhase("idle");
       setTransportMessage(error instanceof Error ? error.message : "Crowd Burst could not be captured.");
       if (navigator.vibrate) navigator.vibrate([90, 45, 90]);
     } finally {
       setBurstPending(false);
     }
-  }, [burstPending, participantCapability, participantId, recording, send]);
+  }, [burstPending, convexSessionId, hostCapability, participantCapability, participantId, recording, send, showLive, view]);
 
   const commitScene = useCallback(async (
     activeIds: string[],
@@ -1011,31 +1087,41 @@ export default function CrowdCutApp() {
   }, [applyMessage, convexSessionId, directorAuto, hostCapability, send]);
 
   const startProgram = useCallback(async () => {
-    await connectTransport("program");
-    if (convexRef.current && convexSessionId && hostCapability) {
-      await convexRef.current.mutation(api.sessions.startLive, {
-        sessionId: convexSessionId as Id<"sessions">,
-        hostCapability,
-      });
+    if (showLive || programStarting) return;
+    if (!participantId || (process.env.NEXT_PUBLIC_CONVEX_URL && (!convexSessionId || !hostCapability))) {
+      setTransportMessage("Preparing the production room — START FILM will unlock automatically.");
+      return;
     }
-    if (musicFileRef.current && !masterAudioUrl) {
-      try {
-        const uploadedAudio = await putAsset(musicFileRef.current, "master-audio");
-        setMasterAudioUrl(uploadedAudio);
-        await send({ type: "master_audio", url: uploadedAudio });
-      } catch {
-        setTransportMessage("The live film can run, but the master track upload failed.");
+    setProgramStarting(true);
+    setTransportMessage("Opening the live Program View…");
+    try {
+      await connectTransport("program");
+      if (convexRef.current && convexSessionId && hostCapability) {
+        await convexRef.current.mutation(api.sessions.startLive, {
+          sessionId: convexSessionId as Id<"sessions">,
+          hostCapability,
+        });
       }
+      setShowLive(true);
+      setJoinExpanded(false);
+      setElapsed(0);
+      setDirectorDecision(feedsRef.current.length
+        ? "MANUAL HOLD · CLICK A CAMERA TO TAKE IT LIVE"
+        : "MANUAL HOLD · WAITING FOR FIRST CAMERA");
+      await send({ type: "session_state", state: "live" });
+    } catch (error) {
+      setTransportMessage(error instanceof Error ? error.message : "The live film could not start.");
+    } finally {
+      setProgramStarting(false);
     }
-    setShowLive(true);
-    setJoinExpanded(false);
-    setElapsed(0);
-    await send({ type: "session_state", state: "live" });
-    if (audioRef.current && musicUrl) await audioRef.current.play().catch(() => undefined);
-  }, [connectTransport, convexSessionId, hostCapability, masterAudioUrl, musicUrl, putAsset, send]);
+  }, [connectTransport, convexSessionId, hostCapability, participantId, programStarting, send, showLive]);
 
   const publishHostAngle = useCallback(async () => {
+    if (hostPublishing || feedsRef.current.some((feed) => feed.local)) return;
+    setHostPublishing(true);
     try {
+      if (!showLive) await startProgram();
+      setTransportMessage("Opening this computer's optional host camera…");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
@@ -1081,8 +1167,11 @@ export default function CrowdCutApp() {
         joinedAt: Date.now(),
       };
       setFeeds((current) => [...current.filter((feed) => feed.id !== host.id), host]);
-      recordingStartedRef.current = Date.now();
+      const startedAt = Date.now();
+      recordingStartedRef.current = startedAt;
+      setCameraStartedAt(startedAt);
       setRecording(true);
+      setTransportMessage("Host angle is live. The host can now trigger a synchronized Burst.");
       if (heartbeatRef.current) window.clearInterval(heartbeatRef.current);
       heartbeatRef.current = window.setInterval(() => {
         if (!convexRef.current || !participantCapability) return;
@@ -1096,8 +1185,10 @@ export default function CrowdCutApp() {
       }, 5000);
     } catch (error) {
       setTransportMessage(error instanceof Error ? error.message : "Host camera could not start.");
+    } finally {
+      setHostPublishing(false);
     }
-  }, [connectTransport, participantCapability, participantId]);
+  }, [connectTransport, hostPublishing, participantCapability, participantId, showLive, startProgram]);
 
   useEffect(() => {
     if (!showLive) return;
@@ -1109,47 +1200,71 @@ export default function CrowdCutApp() {
   const orderedFeeds = useMemo(() => orderedByStage(feeds), [feeds]);
 
   const takeFeed = useCallback((feed: Feed) => {
+    sweepTokenRef.current += 1;
     setDirectorAuto(false);
     setDirectorDecision(`MANUAL TAKE · ${feed.angle} · ${feed.label}`);
-    void commitScene(
-      [feed.id],
-      "hero",
-      `Manual full-screen TAKE from the ${feed.angle.toLowerCase()} stage angle`,
-    ).catch((error) => {
+    void (async () => {
+      if (!showLive) await startProgram();
+      await commitScene(
+        [feed.id],
+        "hero",
+        `Manual full-screen TAKE from the ${feed.angle.toLowerCase()} stage angle`,
+      );
+    })().catch((error) => {
       setTransportMessage(error instanceof Error ? error.message : "The camera TAKE failed.");
     });
-  }, [commitScene]);
+  }, [commitScene, showLive, startProgram]);
 
   const takeDuo = useCallback(() => {
     const directed = stageAwareDirectorScene(feeds, 2);
     const pair = directed.feeds.slice(0, 2);
     if (!pair.length) return;
+    sweepTokenRef.current += 1;
     setDirectorAuto(false);
     setDirectorDecision(`MANUAL DUO · ${pair.map((feed) => feed.angle).join(" + ")}`);
-    void commitScene(
-      pair.map((feed) => feed.id),
-      pair.length > 1 ? "duo" : "hero",
-      `Manual complementary-angle DUO: ${pair.map((feed) => feed.angle).join(" + ")}`,
-    ).catch((error) => {
+    void (async () => {
+      if (!showLive) await startProgram();
+      await commitScene(
+        pair.map((feed) => feed.id),
+        pair.length > 1 ? "duo" : "hero",
+        `Manual complementary-angle DUO: ${pair.map((feed) => feed.angle).join(" + ")}`,
+      );
+    })().catch((error) => {
       setTransportMessage(error instanceof Error ? error.message : "The DUO TAKE failed.");
     });
-  }, [commitScene, feeds]);
+  }, [commitScene, feeds, showLive, startProgram]);
 
   const takeSweep = useCallback(() => {
     const sweep = orderedByStage(feeds).slice(0, 6);
     if (!sweep.length) return;
+    const sweepToken = ++sweepTokenRef.current;
     setDirectorAuto(false);
     setDirectorDecision(`MANUAL SWEEP · ${sweep.map((feed) => feed.angle).join(" → ")}`);
-    void commitScene(
-      sweep.map((feed) => feed.id),
-      sweep.length > 1 ? "sweep" : "hero",
-      `Manual stage-relative SWEEP: ${sweep.map((feed) => feed.angle).join(" → ")}`,
-    ).catch((error) => {
+    void (async () => {
+      if (!showLive) await startProgram();
+      await commitScene(
+        sweep.map((feed) => feed.id),
+        sweep.length > 1 ? "sweep" : "hero",
+        `Manual stage-relative SWEEP: ${sweep.map((feed) => feed.angle).join(" → ")}`,
+      );
+      if (sweep.length <= 1) return;
+      const landingHero = pickAngle(sweep, "CENTER", 0) ?? sweep[sweep.length - 1];
+      window.setTimeout(() => {
+        if (sweepTokenRef.current !== sweepToken) return;
+        setDirectorDecision(`MANUAL LAND · ${landingHero.angle} · ${landingHero.label}`);
+        void commitScene(
+          [landingHero.id],
+          "hero",
+          `Manual SWEEP landed deliberately on ${landingHero.angle.toLowerCase()} hero`,
+        ).catch((error) => setTransportMessage(error instanceof Error ? error.message : "The SWEEP landing failed."));
+      }, 1_600 + (sweep.length - 1) * SWEEP_STAGGER_MS);
+    })().catch((error) => {
       setTransportMessage(error instanceof Error ? error.message : "The SWEEP TAKE failed.");
     });
-  }, [commitScene, feeds]);
+  }, [commitScene, feeds, showLive, startProgram]);
 
   const toggleDirectorAuto = useCallback(() => {
+    sweepTokenRef.current += 1;
     const next = !directorAuto;
     setDirectorAuto(next);
     setDirectorDecision(
@@ -1197,8 +1312,13 @@ export default function CrowdCutApp() {
   }, [commitScene, feeds, visionBusy]);
 
   useEffect(() => {
-    if (view !== "program" || !showLive || !directorAuto || feeds.length === 0 || burst) return;
+    if (view !== "program" || !showLive || !directorAuto || burst) return;
     const directNow = () => {
+      const currentFeeds = feedsRef.current;
+      if (currentFeeds.length === 0) {
+        setDirectorDecision("AI AUTO · WAITING FOR A LIVE CAMERA");
+        return;
+      }
       if (convexRef.current && convexSessionId && hostCapability) {
         setDirectorDecision("AI AUTO · CONVEX IS DIRECTING THE ROOM…");
         void convexRef.current.mutation(api.director.scheduleAutoScene, {
@@ -1213,7 +1333,7 @@ export default function CrowdCutApp() {
         });
         return;
       }
-      const directed = stageAwareDirectorScene(feeds, directorStepRef.current);
+      const directed = stageAwareDirectorScene(currentFeeds, directorStepRef.current);
       directorStepRef.current += 1;
       if (!directed.feeds.length) return;
       setDirectorDecision(`AI AUTO · ${directed.decision}`);
@@ -1231,15 +1351,20 @@ export default function CrowdCutApp() {
     directNow();
     const timer = window.setInterval(directNow, 3600);
     return () => window.clearInterval(timer);
-  }, [burst, commitScene, convexSessionId, directorAuto, feeds, hostCapability, showLive, view]);
+  }, [burst, commitScene, convexSessionId, directorAuto, hostCapability, showLive, view]);
 
   useEffect(() => {
     if (view !== "program" || !burst || feeds.length === 0) return;
-    if (!burstRestoreRef.current) burstRestoreRef.current = scene;
-    const ids = orderedByStage(feeds).slice(0, 6).map((feed) => feed.id);
+    const burstFeeds = orderedByStage(feeds).slice(0, 6);
+    const ids = burstFeeds.map((feed) => feed.id);
+    const landingHero = pickAngle(burstFeeds, "CENTER", 0) ?? burstFeeds[burstFeeds.length - 1];
+    sweepTokenRef.current += 1;
     queueMicrotask(() => {
+      setBurstPhase("preview");
+      setLastBurstCount(ids.length);
+      setBurst((current) => current ? { ...current, count: Math.max(current.count, ids.length) } : current);
       setDirectorDecision(
-        `BURST SWEEP · ${orderedByStage(feeds).slice(0, 6).map((feed) => feed.angle).join(" → ")}`,
+        `BURST PREVIEW · ${burstFeeds.map((feed) => feed.angle).join(" → ")}`,
       );
     });
     void commitScene(
@@ -1249,11 +1374,15 @@ export default function CrowdCutApp() {
     );
     void send({ type: "burst_caught", id: burst.id, count: ids.length });
     const timer = window.setTimeout(() => {
-      const restore = burstRestoreRef.current;
-      burstRestoreRef.current = null;
       setBurst(null);
-      if (restore) void commitScene(restore.activeIds, restore.layout, "Restore pre-Burst program scene");
-    }, 3200);
+      setBurstPhase("preserved");
+      setDirectorDecision(`BURST PRESERVED · LANDED ON ${landingHero.angle} HERO`);
+      void commitScene(
+        [landingHero.id],
+        "hero",
+        `Crowd Burst completed and landed on ${landingHero.angle.toLowerCase()} hero`,
+      );
+    }, 1_600 + (burstFeeds.length - 1) * SWEEP_STAGGER_MS);
     return () => window.clearTimeout(timer);
     // Burst is intentionally a single scheduled production moment.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1263,8 +1392,7 @@ export default function CrowdCutApp() {
     roomRef.current?.disconnect();
     cameraStream?.getTracks().forEach((track) => track.stop());
     if (clipUrl) URL.revokeObjectURL(clipUrl);
-    if (musicUrl) URL.revokeObjectURL(musicUrl);
-  }, [cameraStream, clipUrl, musicUrl]);
+  }, [cameraStream, clipUrl]);
 
   const activeFeeds = useMemo(() => {
     const selected = scene.activeIds.map((id) => feeds.find((feed) => feed.id === id)).filter(Boolean) as Feed[];
@@ -1274,10 +1402,64 @@ export default function CrowdCutApp() {
       : directedFallback.slice(0, scene.layout === "duo" ? 2 : 1);
   }, [feeds, orderedFeeds, scene.activeIds, scene.layout]);
 
+  const cameraLiveFeeds = useMemo(() => {
+    const selected = scene.activeIds.flatMap((id) => {
+      if (id === participantId && cameraStream) {
+        return [{
+          id,
+          angle: cameraAngle,
+          label: "MY ANGLE",
+          stream: cameraStream,
+          local: true,
+          joinedAt: cameraStartedAt,
+        } satisfies Feed];
+      }
+      const remote = feeds.find((feed) => feed.id === id);
+      return remote ? [remote] : [];
+    });
+    if (selected.length) return selected;
+    if (orderedFeeds.length) return orderedFeeds.slice(0, scene.layout === "duo" ? 2 : 1);
+    if (cameraStream) return [{
+      id: participantId,
+      angle: cameraAngle,
+      label: "MY ANGLE",
+      stream: cameraStream,
+      local: true,
+      joinedAt: cameraStartedAt,
+    } satisfies Feed];
+    return [];
+  }, [cameraAngle, cameraStartedAt, cameraStream, feeds, orderedFeeds, participantId, scene.activeIds, scene.layout]);
+
+  const hostAnglePublished = feeds.some((feed) => feed.local);
+  const crowdCameraCount = feeds.filter((feed) => !feed.local).length;
+  const programRoomReady = booted && Boolean(participantId) && (
+    !process.env.NEXT_PUBLIC_CONVEX_URL || Boolean(convexSessionId && hostCapability)
+  );
+  const artifactUploadDone = (["waiting", "editing", "rendering", "ready"] as ArtifactPhase[]).includes(artifactPhase);
+  const artifactEditDone = (["rendering", "ready"] as ArtifactPhase[]).includes(artifactPhase);
+
   if (view === "camera") {
     return (
       <main className={`camera-shell ${selectedLive ? "is-live" : ""}`}>
-        <video ref={previewRef} className="camera-preview" autoPlay muted playsInline />
+        <video
+          ref={previewRef}
+          className={`camera-preview ${recording && cameraViewMode === "live" && cameraLiveFeeds.length ? "is-hidden" : ""}`}
+          autoPlay
+          muted
+          playsInline
+        />
+        {recording && cameraViewMode === "live" && cameraLiveFeeds.length > 0 && (
+          <div className={`camera-live-cut layout-${cameraLiveFeeds.length > 1 ? "duo" : "hero"}`}>
+            {cameraLiveFeeds.slice(0, 2).map((feed) => (
+              <div className="camera-live-feed" key={feed.id}>
+                <FeedVideo feed={feed} />
+                <span>{feed.id === participantId
+                  ? selectedLive ? "YOUR ANGLE · ON AIR" : "MY ANGLE · PROGRAM WAITING"
+                  : `${feed.angle} · ${feed.label}`}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {!cameraStream && <div className="camera-aurora" aria-hidden="true" />}
         <header className="camera-topbar">
           <BrandMark />
@@ -1285,6 +1467,23 @@ export default function CrowdCutApp() {
             {selectedLive ? "YOUR ANGLE IS LIVE" : recording ? "RECORDING" : "READY"}
           </StatusPill>
         </header>
+
+        {recording && (
+          <div className="camera-view-toggle" role="group" aria-label="Choose camera monitor">
+            <button className={cameraViewMode === "mine" ? "selected" : ""} onClick={() => setCameraViewMode("mine")}>MY ANGLE</button>
+            <button className={cameraViewMode === "live" ? "selected" : ""} onClick={() => setCameraViewMode("live")}>
+              LIVE CUT <i aria-hidden="true" />
+            </button>
+          </div>
+        )}
+
+        <BurstExperience
+          phase={burstPhase}
+          countdown={burstCountdown}
+          count={Math.max(lastBurstCount, ownedBurst?.count ?? burst?.count ?? 0)}
+          total={Math.max(cameraLiveFeeds.length, 1)}
+          feeds={cameraLiveFeeds}
+        />
 
         {!recording && !clipUrl && (
           <section className="camera-intro">
@@ -1327,7 +1526,11 @@ export default function CrowdCutApp() {
               <b>{burstPending ? "CATCHING EVERY ANGLE…" : ownedBurst ? "BURST CAUGHT · TAP FOR ANOTHER" : "BURST THIS MOMENT"}</b>
               <small>{ownedBurst ? `${Math.max(1, ownedBurst.count)} angles captured your moment` : "Keep filming — the crowd captures every angle"}</small>
             </button>
+            {burstPhase === "preserved" && ownedBurst && (
+              <p className="camera-burst-preserved"><b>BURST PRESERVED</b> Your synchronized angle uploads now while the full recording continues uninterrupted.</p>
+            )}
             <button className="stop-trigger" onClick={stopCamera}>Stop & build my CrowdCut</button>
+            {transportMessage && <p className="inline-message camera-inline-message">{transportMessage}</p>}
           </section>
         )}
 
@@ -1335,12 +1538,19 @@ export default function CrowdCutApp() {
           <section className="artifact-card">
             <p className="eyebrow">YOUR MOMENT IS REAL</p>
             <h2>{artifactUrl ? "Your CrowdCut is ready." : "Your angle is safe."}</h2>
+            <div className={`artifact-pipeline phase-${artifactPhase}`} aria-label="CrowdCut artifact progress">
+              <span className="complete"><i />SAVED</span>
+              <span className={artifactUploadDone ? "complete" : artifactPhase === "uploading" ? "active" : ""}><i />UPLOAD</span>
+              <span className={artifactEditDone ? "complete" : (["waiting", "editing"] as ArtifactPhase[]).includes(artifactPhase) ? "active" : ""}><i />AI CUT</span>
+              <span className={artifactPhase === "ready" ? "complete" : artifactPhase === "rendering" ? "active" : ""}><i />RENDER</span>
+              <span className={artifactPhase === "ready" ? "active" : ""}><i />DOWNLOAD</span>
+            </div>
             <video src={artifactUrl || clipUrl} controls playsInline />
             <div className="artifact-actions">
-              <a href={artifactUrl || clipUrl} download={artifactUrl ? "my-crowdcut.mp4" : "my-angle.webm"}>Save video</a>
-              {ownedBurst && !artifactUrl && (
+              <a href={artifactUrl || clipUrl} download={artifactUrl ? "my-crowdcut.mp4" : "my-angle.webm"}>{artifactUrl ? "DOWNLOAD CROWD CUT" : "DOWNLOAD MY ANGLE"}</a>
+              {ownedBurst && !artifactUrl && (["waiting", "failed", "rendering"] as ArtifactPhase[]).includes(artifactPhase) && (
                 <button onClick={() => void buildArtifact()}>
-                  {uploadState === "queued" ? "Check render" : "Build from uploaded angles"}
+                  {artifactPhase === "rendering" ? "CHECK RENDER" : artifactPhase === "waiting" ? "RETRY MULTI-ANGLE BUILD" : "BUILD FROM REAL ANGLES"}
                 </button>
               )}
               <button onClick={() => {
@@ -1350,6 +1560,8 @@ export default function CrowdCutApp() {
                 setBurst(null);
                 setOwnedBurst(null);
                 setUploadState("idle");
+                setArtifactPhase("idle");
+                setBurstPhase("idle");
                 renderIdRef.current = "";
               }}>Record another</button>
             </div>
@@ -1364,7 +1576,11 @@ export default function CrowdCutApp() {
     <main className="program-shell">
       <section className={`program-stage layout-${scene.layout} ${burst ? "bursting" : ""}`}>
         {activeFeeds.length ? activeFeeds.map((feed, index) => (
-          <article className={`program-feed feed-${index + 1}`} key={feed.id}>
+          <article
+            className={`program-feed feed-${index + 1} ${index === activeFeeds.length - 1 ? "feed-last" : ""}`}
+            key={`${scene.revision}-${feed.id}`}
+            style={scene.layout === "sweep" ? { animationDelay: `${index * SWEEP_STAGGER_MS}ms` } : undefined}
+          >
             <FeedVideo feed={feed} />
             <span className={`feed-label angle-${feed.angle.toLowerCase()}`}>
               <i />
@@ -1375,22 +1591,35 @@ export default function CrowdCutApp() {
         )) : (
           <div className="program-empty">
             <div className="empty-beam" aria-hidden="true" />
-            <p className="eyebrow">OUTSIDE LANDS · LIVE CAMERA CREW</p>
-            <h1>THE CROWD<br />IS THE <em>CAMERA.</em></h1>
-            <p>Every phone becomes an angle. Every angle becomes the film.</p>
+            <p className="eyebrow">CROWDCUT · PROGRAM VIEW</p>
+            <h1>DIRECT THE<br /><em>LIVE FILM.</em></h1>
+            <p>Start the film, scan in real phones, then click any angle to TAKE it live.</p>
+            <button className="program-empty-start" onClick={startProgram} disabled={!programRoomReady || showLive || programStarting}>
+              {!programRoomReady ? "PREPARING LIVE ROOM…" : programStarting ? "OPENING LIVE ROOM…" : showLive ? "FILM IS LIVE · WAITING FOR CAMERAS" : "START FILM"}
+            </button>
           </div>
         )}
 
-        {burst && (
-          <div className="burst-overlay">
-            <span className="burst-word">CROWD</span><span className="burst-word alt">BURST</span>
-            <p>{Math.max(burst.count, activeFeeds.length)} REAL PERSPECTIVES · ONE MOMENT</p>
-          </div>
+        <BurstExperience
+          phase={burstPhase}
+          countdown={burstCountdown}
+          count={Math.max(lastBurstCount, burst?.count ?? 0)}
+          total={Math.max(feeds.length, 1)}
+          feeds={orderedFeeds}
+        />
+
+        {burstPhase === "preserved" && (
+          <aside className="burst-pipeline-status" role="status">
+            <i aria-hidden="true" />
+            <span><b>BURST PRESERVED · {Math.max(lastBurstCount, 1)} ANGLES</b> Phones upload synchronized microclips now while the live film keeps running.</span>
+            <button onClick={() => setBurstPhase("idle")}>DISMISS</button>
+          </aside>
         )}
 
         <header className="program-topbar">
           <BrandMark />
           <div className="program-status">
+            <span className={`director-mode-badge ${directorAuto ? "auto" : "manual"}`}>{directorAuto ? "AUTO DIRECTOR" : "MANUAL CONTROL"}</span>
             <StatusPill tone={showLive ? "live" : "ready"}>{showLive ? "PROGRAM LIVE" : "READY"}</StatusPill>
             <span>{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span>
           </div>
@@ -1414,41 +1643,48 @@ export default function CrowdCutApp() {
               <button onClick={() => setJoinExpanded(false)}>COLLAPSE</button>
             </div>
           </div>
-          {!joinExpanded && <button className="join-expand" onClick={() => setJoinExpanded(true)}>ENLARGE QR</button>}
+          {!joinExpanded && <button className="join-expand" onClick={() => setJoinExpanded(true)}>SCAN TO JOIN · ENLARGE</button>}
         </aside>
 
-        {feeds.length > 0 && (
-          <aside className="multiview-rail" aria-label="Live camera multiview">
-            <header>
-              <div><span className="live-dot" /> MULTIVIEW</div>
-              <b>{STAGE_ANGLES.map((angle) => `${angle[0]}:${feeds.filter((feed) => feed.angle === angle).length}`).join(" · ")}</b>
-            </header>
-            <div className="multiview-grid">
-              {orderedFeeds.slice(0, 8).map((feed, index) => {
-                const onAir = scene.activeIds.includes(feed.id) || (!scene.activeIds.length && index === 0);
-                return (
-                  <button
-                    className={`multiview-card angle-${feed.angle.toLowerCase()} ${onAir ? "on-air" : ""}`}
-                    key={feed.id}
-                    onClick={() => takeFeed(feed)}
-                    aria-label={`Take ${feed.angle.toLowerCase()} angle ${feed.label} full screen`}
-                  >
-                    <span className="multiview-video"><FeedVideo feed={feed} /></span>
-                    <span className="multiview-meta">
-                      <b><span>{feed.angle}</span>{feed.label}</b>
-                      <em>{onAir ? "ON AIR" : "TAKE →"}</em>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="layout-controls" aria-label="Program layouts">
-              <button onClick={() => { const target = activeFeeds[0] ?? orderedFeeds[0]; if (target) takeFeed(target); }}>HERO</button>
-              <button disabled={feeds.length < 2} onClick={takeDuo}>DUO</button>
-              <button disabled={feeds.length < 2} onClick={takeSweep}>CROWD SWEEP</button>
-            </div>
-          </aside>
-        )}
+        <aside className="multiview-rail" aria-label="Live camera multiview">
+          <header>
+            <div><span className={showLive ? "live-dot" : "ready-dot"} /> MULTIVIEW · CLICK TO TAKE</div>
+            <button className={`rail-mode ${directorAuto ? "auto" : "manual"}`} onClick={toggleDirectorAuto}>
+              {directorAuto ? "AUTO ON" : "MANUAL"}
+            </button>
+          </header>
+          <div className="angle-distribution">{STAGE_ANGLES.map((angle) => `${angle[0]}:${feeds.filter((feed) => feed.angle === angle).length}`).join("  ·  ")}</div>
+          <div className="multiview-grid">
+            {orderedFeeds.length ? orderedFeeds.slice(0, 8).map((feed, index) => {
+              const onAir = showLive && (scene.activeIds.includes(feed.id) || (!scene.activeIds.length && index === 0));
+              return (
+                <button
+                  className={`multiview-card angle-${feed.angle.toLowerCase()} ${onAir ? "on-air" : ""}`}
+                  key={feed.id}
+                  onClick={() => takeFeed(feed)}
+                  aria-label={`Take ${feed.angle.toLowerCase()} angle ${feed.label} full screen`}
+                >
+                  <span className="multiview-video"><FeedVideo feed={feed} /></span>
+                  <span className="multiview-meta">
+                    <b><span>{feed.angle}</span>{feed.label}</b>
+                    <em>{onAir ? "ON AIR" : "TAKE →"}</em>
+                  </span>
+                </button>
+              );
+            }) : (
+              <div className="multiview-empty">
+                <span>01</span>
+                <b>NO CAMERAS YET</b>
+                <p>Keep the QR visible. Every phone appears here as a clickable TAKE.</p>
+              </div>
+            )}
+          </div>
+          <div className="layout-controls" aria-label="Program layouts">
+            <button className={scene.layout === "hero" ? "active" : ""} disabled={feeds.length === 0} onClick={() => { const target = activeFeeds[0] ?? orderedFeeds[0]; if (target) takeFeed(target); }}>HERO TAKE</button>
+            <button className={scene.layout === "duo" ? "active" : ""} disabled={feeds.length < 2} onClick={takeDuo}>DUO</button>
+            <button className={scene.layout === "sweep" ? "active" : ""} disabled={feeds.length < 2} onClick={takeSweep}>SWEEP → HERO</button>
+          </div>
+        </aside>
 
         <footer className="program-footer">
           <div className="angle-count"><b>{feeds.length}</b><span>CONNECTED CAMERAS</span></div>
@@ -1464,27 +1700,31 @@ export default function CrowdCutApp() {
       <section className="director-dock" aria-label="CrowdCut production controls">
         <div className="dock-copy">
           <p className="eyebrow">LIVE PRODUCTION</p>
-          <h2>{showLive ? directorDecision : "Ready to turn the room into a camera."}</h2>
-          <p>{transportMessage || "Connect the program, publish your host angle, then let the crowd join."}</p>
+          <h2>{showLive ? directorDecision : "Start the film. Phones join as real cameras."}</h2>
+          <p>{transportMessage || "Manual is the safe default. Turn AUTO on only when you want the director to cut for you."}</p>
         </div>
         <div className="dock-controls">
-          <label className="file-control">
-            <span>{musicUrl ? "ARTIFACT AUDIO LOADED" : "OPTIONAL ARTIFACT AUDIO"}</span>
-            <input type="file" accept="audio/*" onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) {
-                musicFileRef.current = file;
-                setMusicUrl((current) => { if (current) URL.revokeObjectURL(current); return URL.createObjectURL(file); });
-              }
-            }} />
-          </label>
-          <button className="dock-button secondary" onClick={publishHostAngle}>Publish host angle</button>
-          <button className="dock-button secondary" onClick={toggleDirectorAuto}>{directorAuto ? "Take manual control" : "Resume AI director"}</button>
-          <button className="dock-button vision-control" onClick={() => void runVisionTake()} disabled={visionBusy || feeds.length === 0}>{visionBusy ? "AI seeing angles…" : "AI vision take"}</button>
-          <button className="dock-button burst-control" onClick={() => void triggerBurst()} disabled={!recording || feeds.length === 0 || burstPending}>{burstPending ? "Catching burst…" : "Burst all angles"}</button>
-          <button className="dock-button primary" onClick={startProgram}>{showLive ? "Program running" : "Start live film"}</button>
+          <button className="dock-button primary start-film-control" onClick={startProgram} disabled={!programRoomReady || showLive || programStarting}>
+            <b>{!programRoomReady ? "PREPARING ROOM…" : programStarting ? "STARTING…" : showLive ? "FILM LIVE" : "START FILM"}</b>
+            <small>{showLive ? `${feeds.length} cameras ready` : programRoomReady ? "Open the Program View" : "Realtime handshake"}</small>
+          </button>
+          <button className="dock-button secondary host-angle-control" onClick={publishHostAngle} disabled={!programRoomReady || hostAnglePublished || hostPublishing}>
+            {hostPublishing ? "OPENING CAMERA…" : hostAnglePublished ? "HOST ANGLE LIVE" : "ADD HOST CAMERA"}
+          </button>
+          <button className={`dock-button mode-control ${directorAuto ? "auto" : "manual"}`} onClick={toggleDirectorAuto}>
+            <b>{directorAuto ? "AUTO DIRECTOR ON" : "MANUAL CONTROL"}</b>
+            <small>{directorAuto ? "Tap to hold" : "Tap to automate"}</small>
+          </button>
+          <button className="dock-button vision-control" onClick={() => void runVisionTake()} disabled={visionBusy || feeds.length === 0 || !showLive}>{visionBusy ? "AI SEEING ANGLES…" : !showLive ? "START FILM FOR AI" : "AI VISION TAKE"}</button>
+          <button
+            className="dock-button burst-control"
+            onClick={() => void triggerBurst()}
+            disabled={crowdCameraCount === 0 || burstPending || !showLive}
+            title={crowdCameraCount === 0 ? "At least one recording crowd camera is required." : "Cue the same Burst instant on every recording phone."}
+          >
+            {burstPending ? `BURST IN ${Math.max(burstCountdown, 1)}…` : "BURST ALL ANGLES"}
+          </button>
         </div>
-        {musicUrl && <audio ref={audioRef} src={musicUrl} onEnded={() => { setShowLive(false); void send({ type: "session_state", state: "ended" }); }} />}
       </section>
     </main>
   );
