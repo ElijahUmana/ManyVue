@@ -12,7 +12,7 @@ const PRODUCTION_BASE_URL = "https://api.shotstack.io/edit/v1";
 export interface ArtifactRenderRequest {
   editInput: EditRecipeInput;
   recipe: EditRecipe;
-  masterAudioUrl: string;
+  masterAudioUrl?: string;
 }
 
 export interface ShotstackEnv {
@@ -67,12 +67,21 @@ export function validateArtifactRenderRequest(value: unknown): ValidationResult<
   const errors = Object.keys(value).every((key) => allowed.has(key)) ? [] : ["render request contains unsupported properties"];
   const editInput = validateEditRecipeInput(value.editInput);
   if (!editInput.ok) errors.push(...editInput.errors.map((error) => `editInput: ${error}`));
-  if (!isHttpsUrl(value.masterAudioUrl)) errors.push("masterAudioUrl must be a real HTTPS asset URL");
+  if (value.masterAudioUrl !== undefined && value.masterAudioUrl !== "" && !isHttpsUrl(value.masterAudioUrl)) {
+    errors.push("masterAudioUrl must be a real HTTPS asset URL when supplied");
+  }
   if (!editInput.ok) return { ok: false, errors };
   const recipe = validateEditRecipe(value.recipe, editInput.value);
   if (!recipe.ok) errors.push(...recipe.errors.map((error) => `recipe: ${error}`));
-  if (!recipe.ok || !isHttpsUrl(value.masterAudioUrl) || errors.length > 0) return { ok: false, errors };
-  return { ok: true, value: { editInput: editInput.value, recipe: recipe.value, masterAudioUrl: value.masterAudioUrl } };
+  if (!recipe.ok || errors.length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    value: {
+      editInput: editInput.value,
+      recipe: recipe.value,
+      ...(isHttpsUrl(value.masterAudioUrl) ? { masterAudioUrl: value.masterAudioUrl } : {}),
+    },
+  };
 }
 
 function callbackWithToken(callbackUrl: string, token: string): string {
@@ -107,7 +116,7 @@ export function buildShotstackEdit(request: ArtifactRenderRequest, callbackUrl: 
         type: "video",
         src: source.clipUrl,
         trim: shot.sourceInMs / 1_000,
-        volume: shot.sourceVolume,
+        volume: request.masterAudioUrl ? shot.sourceVolume : 1,
         transcode: true,
         ...(crop ? { crop } : {}),
       },
@@ -121,11 +130,11 @@ export function buildShotstackEdit(request: ArtifactRenderRequest, callbackUrl: 
 
   return {
     timeline: {
-      soundtrack: {
+      ...(request.masterAudioUrl ? { soundtrack: {
         src: request.masterAudioUrl,
         effect: "fadeInFadeOut",
         volume: request.recipe.audio.masterVolume,
-      },
+      } } : {}),
       background: "#050507",
       tracks: [{ clips }],
       cache: true,

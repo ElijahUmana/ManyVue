@@ -738,7 +738,7 @@ export default function CrowdCutApp() {
               .filter((asset) => asset.metadata.kind === "burst-source" && asset.metadata.burstId === ownedBurst.id)
               .map((asset) => asset.metadata.participant),
           );
-          if (contributors.size >= 2 && effectiveMasterAudioUrl) break;
+          if (contributors.size >= 2) break;
           await wait(1_200);
         }
 
@@ -772,19 +772,15 @@ export default function CrowdCutApp() {
           setArtifactMessage("Waiting for at least two uploaded Burst angles, including yours. Stop the other cameras, then tap Build again.");
           return;
         }
-        if (!effectiveMasterAudioUrl) {
-          setUploadState("failed");
-          setArtifactMessage("The real master track is not uploaded, so no cinematic artifact was fabricated.");
-          return;
-        }
-
         const editInput = {
           artifactId: `burst-${ownedBurst.id}`,
           ownerCameraId: participantId,
           durationMs: Math.min(12_000, Math.max(8_000, Math.min(...candidates.map((candidate) => candidate.availableDurationMs)))),
           candidates,
         };
-        setArtifactMessage("Choosing a truthful cut from the uploaded perspectives…");
+        setArtifactMessage(effectiveMasterAudioUrl
+          ? "Choosing a truthful cut with the uploaded master track…"
+          : "Choosing a truthful cut with the phones’ real concert audio…");
         const plannedResponse = await fetch("/api/ai/edit-recipe", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -800,7 +796,7 @@ export default function CrowdCutApp() {
         const artifactResponse = await fetch("/api/artifacts/render", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ editInput, recipe, masterAudioUrl: effectiveMasterAudioUrl }),
+          body: JSON.stringify({ editInput, recipe, ...(effectiveMasterAudioUrl ? { masterAudioUrl: effectiveMasterAudioUrl } : {}) }),
         });
         const queued = await artifactResponse.json() as { state?: string; renderId?: string; reason?: string; missing?: string[] };
         if (!artifactResponse.ok || queued.state !== "queued" || !queued.renderId) {
@@ -1288,6 +1284,7 @@ export default function CrowdCutApp() {
           <section className="camera-intro">
             <p className="eyebrow">YOU ARE THE CAMERA</p>
             <h1>Record your angle.<br /><em>Take home the crowd.</em></h1>
+            <p>Your mic is saved with your personal recording but is never broadcast into the room, so the live screen cannot create phone-speaker feedback.</p>
             <div className="stage-angle-picker" role="group" aria-label="Choose your position relative to the stage">
               <div>
                 <b>WHERE ARE YOU?</b>
@@ -1318,7 +1315,7 @@ export default function CrowdCutApp() {
 
         {recording && (
           <section className="camera-controls">
-            <div className="recording-readout"><i /> {cameraAngle} ANGLE · LIVE READY <b>{String(elapsed).padStart(2, "0")}s</b></div>
+            <div className="recording-readout"><i /> {cameraAngle} ANGLE · VIDEO LIVE · MIC LOCAL <b>{String(elapsed).padStart(2, "0")}s</b></div>
             <button className={`burst-trigger ${ownedBurst ? "caught" : ""}`} onClick={triggerBurst} disabled={burstPending}>
               <span className="burst-rings" aria-hidden="true"><i /><i /></span>
               <b>{burstPending ? "CATCHING EVERY ANGLE…" : ownedBurst ? "BURST CAUGHT · TAP FOR ANOTHER" : "BURST THIS MOMENT"}</b>
@@ -1453,6 +1450,7 @@ export default function CrowdCutApp() {
             <span>AI DIRECTOR</span>
             <b>{directorAuto ? "AUTO" : "MANUAL"}</b>
             <em>{directorDecision}</em>
+            <em>VIDEO SYNC · NO LIVE MIC MIX</em>
           </div>
         </footer>
       </section>
@@ -1465,7 +1463,7 @@ export default function CrowdCutApp() {
         </div>
         <div className="dock-controls">
           <label className="file-control">
-            <span>{musicUrl ? "TRACK LOADED" : "LOAD MASTER TRACK"}</span>
+            <span>{musicUrl ? "ARTIFACT AUDIO LOADED" : "OPTIONAL ARTIFACT AUDIO"}</span>
             <input type="file" accept="audio/*" onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) {
