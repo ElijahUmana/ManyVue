@@ -25,6 +25,7 @@ type StageAngle = "LEFT" | "CENTER" | "RIGHT";
 type ProgramComposition = 1 | 2 | 3 | 4 | 5 | "sweep";
 type BurstPhase = "idle" | "capturing" | "preview" | "preserved";
 type ArtifactPhase = "idle" | "saved" | "uploading" | "waiting" | "editing" | "rendering" | "ready" | "failed";
+type SessionStatus = "lobby" | "live" | "ended";
 type HostSession = { sessionId: string; slug: string; hostCapability: string };
 type BurstCaptureSignal = {
   _id: Id<"bursts">;
@@ -165,6 +166,13 @@ function compositionFromScene(scene: Scene): ProgramComposition {
   return "sweep";
 }
 
+function directorReasonLabel(reason: string): string {
+  return reason
+    .replace(/\bTAKE\b/giu, "VIEW")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
 function FeedVideo({ feed, muted = true }: { feed: Feed; muted?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
 
@@ -244,9 +252,11 @@ export default function CrowdCutApp() {
   const [, setTransport] = useState<"idle" | "connecting" | "live" | "rehearsal" | "error">("idle");
   const [transportMessage, setTransportMessage] = useState("");
   const [showLive, setShowLive] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>("lobby");
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraOpening, setCameraOpening] = useState(false);
   const [cameraViewMode, setCameraViewMode] = useState<"mine" | "live">("mine");
+  const [cameraFocusedFeedId, setCameraFocusedFeedId] = useState("");
   const [cameraStartedAt, setCameraStartedAt] = useState(0);
   const [recording, setRecording] = useState(false);
   const [burstBufferReady, setBurstBufferReady] = useState(false);
@@ -264,8 +274,9 @@ export default function CrowdCutApp() {
   const [artifactUrl, setArtifactUrl] = useState("");
   const [artifactMessage, setArtifactMessage] = useState("");
   const [directorAuto, setDirectorAuto] = useState(false);
-  const [directorDecision, setDirectorDecision] = useState("MANUAL HOLD · START THE FILM, THEN TAKE A CAMERA");
+  const [directorDecision, setDirectorDecision] = useState("MANUAL HOLD · START THE FILM, THEN CLICK AN ANGLE");
   const [programStarting, setProgramStarting] = useState(false);
+  const [programStopping, setProgramStopping] = useState(false);
   const [hostPublishing, setHostPublishing] = useState(false);
   const [elapsed, setElapsed] = useState(0);
 
@@ -364,7 +375,10 @@ export default function CrowdCutApp() {
         if (mine && navigator.vibrate) navigator.vibrate(36);
       }, delay);
     }
-    if (message.type === "session_state") setShowLive(message.state === "live");
+    if (message.type === "session_state") {
+      setShowLive(message.state === "live");
+      setSessionStatus(message.state);
+    }
   }, []);
 
   useEffect(() => {
@@ -386,6 +400,7 @@ export default function CrowdCutApp() {
         if (cancelled) return;
         serverClockOffsetRef.current = Date.now() - state.serverNowMs;
         setShowLive(state.session.status === "live");
+        setSessionStatus(state.session.status);
         if (state.scene) {
           applyMessage({
             type: "scene",
@@ -403,10 +418,10 @@ export default function CrowdCutApp() {
               // Old deployments briefly wrote Burst spectacle labels into the
               // persisted director scene. Never resurrect those labels: Burst
               // capture is now completely separate from Program View state.
-              setDirectorDecision("MANUAL HOLD · CLICK ANY CAMERA TO TAKE IT LIVE");
+              setDirectorDecision("MANUAL HOLD · CLICK ANY ANGLE TO SHOW IT LIVE");
             } else {
               const mode = state.scene.source === "ai" ? "OPENAI VISION" : state.scene.source === "manual" ? "MANUAL" : "AI AUTO";
-              setDirectorDecision(`${mode} · ${state.scene.reason.toUpperCase()}`);
+              setDirectorDecision(`${mode} · ${directorReasonLabel(state.scene.reason).toUpperCase()}`);
             }
           }
         }
@@ -560,6 +575,7 @@ export default function CrowdCutApp() {
     convexParticipantUnsubscribeRef.current = client.onUpdate(api.director.programState, { sessionSlug: sessionId }, (state) => {
       serverClockOffsetRef.current = Date.now() - state.serverNowMs;
       setShowLive(state.session.status === "live");
+      setSessionStatus(state.session.status);
       if (state.scene) {
         applyMessage({
           type: "scene",
@@ -623,16 +639,18 @@ export default function CrowdCutApp() {
       if (track.kind !== livekit.Track.Kind.Video) return;
       // Program and camera clients both receive the real shared cut. The
       // program requests full quality; camera clients retain adaptive quality
-      // for a responsive in-hand LIVE CUT monitor.
+      // for a responsive in-hand Live Cuts browser.
       publication.setVideoQuality(role === "program" ? livekit.VideoQuality.HIGH : livekit.VideoQuality.MEDIUM);
       publication.setVideoFPS(role === "program" ? 30 : 24);
       addTrack(track, participant);
     });
     room.on(livekit.RoomEvent.TrackUnsubscribed, (_track, _publication, participant) => {
       setFeeds((current) => current.filter((feed) => feed.id !== participant.identity));
+      setCameraFocusedFeedId((current) => current === participant.identity ? "" : current);
     });
     room.on(livekit.RoomEvent.ParticipantDisconnected, (participant) => {
       setFeeds((current) => current.filter((feed) => feed.id !== participant.identity));
+      setCameraFocusedFeedId((current) => current === participant.identity ? "" : current);
     });
   }, [applyMessage]);
 
@@ -1029,6 +1047,15 @@ export default function CrowdCutApp() {
     setCameraStream(null);
   }, [cameraStream, participantCapability, participantId]);
 
+  useEffect(() => {
+    if (view !== "camera" || sessionStatus !== "ended" || !recording) return;
+    const timer = window.setTimeout(() => {
+      setTransportMessage("The host stopped the film. Saving your complete local recording now…");
+      void stopCamera();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [recording, sessionStatus, stopCamera, view]);
+
   const triggerBurst = useCallback(async () => {
     const hostCanCue = view === "program" && showLive && feedsRef.current.some((feed) => !feed.local);
     if (
@@ -1094,7 +1121,7 @@ export default function CrowdCutApp() {
   ) => {
     const issuedAt = Date.now();
     const source = sourceOverride ?? (reason?.startsWith("Manual") ? "manual" : directorAuto ? "ai" : "manual");
-    const sceneReason = reason ?? (directorAuto ? "Stage-aware deterministic AI direction" : "Presenter TAKE");
+    const sceneReason = reason ?? (directorAuto ? "Stage-aware deterministic AI direction" : "Presenter live view");
     const next: Scene = {
       layout,
       activeIds,
@@ -1137,10 +1164,11 @@ export default function CrowdCutApp() {
         });
       }
       setShowLive(true);
+      setSessionStatus("live");
       setJoinExpanded(false);
       setElapsed(0);
       setDirectorDecision(feedsRef.current.length
-        ? "MANUAL HOLD · CLICK A CAMERA TO TAKE IT LIVE"
+        ? "MANUAL HOLD · CLICK ANY ANGLE TO SHOW IT LIVE"
         : "MANUAL HOLD · WAITING FOR FIRST CAMERA");
       await send({ type: "session_state", state: "live" });
     } catch (error) {
@@ -1149,6 +1177,47 @@ export default function CrowdCutApp() {
       setProgramStarting(false);
     }
   }, [connectTransport, convexSessionId, hostCapability, participantId, programStarting, send, showLive]);
+
+  const stopProgram = useCallback(async () => {
+    if (!showLive || programStopping) return;
+    setProgramStopping(true);
+    setTransportMessage("Stopping the live film and safely closing every camera…");
+    try {
+      if (convexRef.current && convexSessionId && hostCapability) {
+        await convexRef.current.mutation(api.sessions.endLive, {
+          sessionId: convexSessionId as Id<"sessions">,
+          hostCapability,
+        });
+      }
+      await send({ type: "session_state", state: "ended" });
+      sweepTokenRef.current += 1;
+      setDirectorAuto(false);
+      await rollingBurstRef.current?.stop().catch(() => undefined);
+      rollingBurstRef.current = null;
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+      setCameraStream(null);
+      setRecording(false);
+      setBurstBufferReady(false);
+      if (heartbeatRef.current) window.clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+      await roomRef.current?.disconnect();
+      roomRef.current = null;
+      setFeeds([]);
+      setSelectedCameraIds([]);
+      setJoinExpanded(false);
+      setScene({ layout: "hero", activeIds: [], cutAt: 0, revision: Date.now() });
+      setProgramComposition(1);
+      setShowLive(false);
+      setSessionStatus("ended");
+      setDirectorDecision("FILM ENDED · EVERY SAVED BURST REMAINS AVAILABLE");
+      setTransportMessage("Film stopped. Start a new room whenever you are ready.");
+    } catch (error) {
+      setTransportMessage(error instanceof Error ? error.message : "The live film could not be stopped safely.");
+    } finally {
+      setProgramStopping(false);
+    }
+  }, [convexSessionId, hostCapability, programStopping, send, showLive]);
 
   const publishHostAngle = useCallback(async () => {
     if (hostPublishing || feedsRef.current.some((feed) => feed.local)) return;
@@ -1256,18 +1325,17 @@ export default function CrowdCutApp() {
 
   const takeFeed = useCallback((feed: Feed) => {
     sweepTokenRef.current += 1;
-    setSelectedCameraIds([feed.id]);
     setDirectorAuto(false);
-    setDirectorDecision(`MANUAL TAKE · ${feed.angle} · ${feed.label}`);
+    setDirectorDecision(`SHOWING LIVE · ${feed.angle} · ${feed.label}`);
     void (async () => {
       if (!showLive) await startProgram();
       await commitScene(
         [feed.id],
         "hero",
-        `Manual full-screen TAKE from the ${feed.angle.toLowerCase()} stage angle`,
+        `Showing the ${feed.angle.toLowerCase()} stage angle full screen`,
       );
     })().catch((error) => {
-      setTransportMessage(error instanceof Error ? error.message : "The camera TAKE failed.");
+      setTransportMessage(error instanceof Error ? error.message : "The live angle could not be shown.");
     });
   }, [commitScene, showLive, startProgram]);
 
@@ -1320,7 +1388,7 @@ export default function CrowdCutApp() {
         ).catch((error) => setTransportMessage(error instanceof Error ? error.message : "The SWEEP landing failed."));
       }, 2_300 + (sweep.length - 1) * PRODUCTION_SWEEP_STAGGER_MS);
     })().catch((error) => {
-      setTransportMessage(error instanceof Error ? error.message : "The SWEEP TAKE failed.");
+      setTransportMessage(error instanceof Error ? error.message : "The live angle sweep failed.");
     });
   }, [commitScene, selectedFeeds, showLive, startProgram]);
 
@@ -1329,7 +1397,7 @@ export default function CrowdCutApp() {
     const next = !directorAuto;
     setDirectorAuto(next);
     setDirectorDecision(
-      next ? "AI AUTO · STAGE-AWARE ROTATION" : "MANUAL HOLD · CLICK ANY CAMERA TO TAKE",
+      next ? "AI AUTO · STAGE-AWARE ROTATION" : "MANUAL HOLD · CLICK ANY ANGLE TO SHOW IT LIVE",
     );
   }, [directorAuto]);
 
@@ -1367,7 +1435,7 @@ export default function CrowdCutApp() {
         setTransportMessage(error instanceof Error ? error.message : "The automatic camera cut failed.");
       });
     };
-    // TAKE immediately when AUTO is enabled; subsequent cuts follow the
+    // Show the first live angle immediately when AUTO is enabled; subsequent cuts follow the
     // predictable production cadence. A presenter should never click AUTO
     // and wonder whether anything happened.
     directNow();
@@ -1401,33 +1469,22 @@ export default function CrowdCutApp() {
       : directedFallback.slice(0, scene.layout === "duo" ? 2 : 1);
   }, [feeds, orderedFeeds, scene.activeIds, scene.layout]);
 
-  const cameraLiveFeeds = useMemo(() => {
-    const selected = scene.activeIds.flatMap((id) => {
-      if (id === participantId && cameraStream) {
-        return [{
-          id,
-          angle: cameraAngle,
-          label: "MY ANGLE",
-          stream: cameraStream,
-          local: true,
-          joinedAt: cameraStartedAt,
-        } satisfies Feed];
-      }
-      const remote = feeds.find((feed) => feed.id === id);
-      return remote ? [remote] : [];
-    });
-    if (selected.length) return selected;
-    if (orderedFeeds.length) return orderedFeeds.slice(0, scene.layout === "duo" ? 2 : 1);
-    if (cameraStream) return [{
+  const cameraBrowseFeeds = useMemo(() => {
+    const mine = cameraStream ? {
       id: participantId,
       angle: cameraAngle,
       label: "MY ANGLE",
       stream: cameraStream,
       local: true,
       joinedAt: cameraStartedAt,
-    } satisfies Feed];
-    return [];
-  }, [cameraAngle, cameraStartedAt, cameraStream, feeds, orderedFeeds, participantId, scene.activeIds, scene.layout]);
+    } satisfies Feed : undefined;
+    return distinctFeeds([mine], orderedFeeds);
+  }, [cameraAngle, cameraStartedAt, cameraStream, orderedFeeds, participantId]);
+
+  const cameraFocusedFeed = useMemo(
+    () => cameraBrowseFeeds.find((feed) => feed.id === cameraFocusedFeedId),
+    [cameraBrowseFeeds, cameraFocusedFeedId],
+  );
 
   const hostAnglePublished = feeds.some((feed) => feed.local);
   const crowdCameraCount = feeds.filter((feed) => !feed.local).length;
@@ -1444,22 +1501,54 @@ export default function CrowdCutApp() {
       <main className={`camera-shell ${selectedLive ? "is-live" : ""}`}>
         <video
           ref={previewRef}
-          className={`camera-preview ${recording && cameraViewMode === "live" && cameraLiveFeeds.length ? "is-hidden" : ""}`}
+          className={`camera-preview ${recording && cameraViewMode === "live" ? "is-hidden" : ""}`}
           autoPlay
           muted
           playsInline
         />
-        {recording && cameraViewMode === "live" && cameraLiveFeeds.length > 0 && (
-          <div className={`camera-live-cut layout-grid-${Math.min(5, cameraLiveFeeds.length)}`}>
-            {cameraLiveFeeds.slice(0, 5).map((feed) => (
-              <div className="camera-live-feed" key={feed.id}>
-                <FeedVideo feed={feed} />
-                <span>{feed.id === participantId
-                  ? selectedLive ? "YOUR ANGLE · ON AIR" : "MY ANGLE · PROGRAM WAITING"
-                  : `${feed.angle} · ${feed.label}`}</span>
+        {recording && cameraViewMode === "live" && (
+          <section className={`camera-live-browser ${cameraFocusedFeed ? "is-focused" : "is-gallery"}`} aria-label="Live Cuts angle viewer">
+            {cameraFocusedFeed ? (
+              <>
+                <div className="camera-live-focus">
+                  <FeedVideo feed={cameraFocusedFeed} />
+                  <div className="camera-live-focus-label">
+                    <span>PRIVATE LIVE VIEW · DOES NOT CHANGE THE PROGRAM</span>
+                    <b>{cameraFocusedFeed.angle} · {cameraFocusedFeed.label}</b>
+                  </div>
+                </div>
+                <button className="camera-live-back" type="button" onClick={() => setCameraFocusedFeedId("")}>← ALL LIVE CUTS</button>
+              </>
+            ) : (
+              <div className="camera-live-gallery-wrap">
+                <header>
+                  <div><p className="eyebrow">LIVE CUTS</p><h2>Every connected angle.</h2></div>
+                  <span>{cameraBrowseFeeds.length} LIVE · TAP ANY VIEW</span>
+                </header>
+                <div className="camera-live-gallery">
+                  {cameraBrowseFeeds.map((feed) => {
+                    const onAir = scene.activeIds.includes(feed.id);
+                    return (
+                      <button
+                        type="button"
+                        className={`camera-live-angle angle-${feed.angle.toLowerCase()} ${onAir ? "on-air" : ""}`}
+                        key={feed.id}
+                        onClick={() => setCameraFocusedFeedId(feed.id)}
+                        aria-label={`Privately view ${feed.label} live`}
+                      >
+                        <span className="camera-live-angle-video"><FeedVideo feed={feed} /></span>
+                        <span className="camera-live-angle-meta">
+                          <b>{feed.angle} · {feed.label}</b>
+                          <em>{onAir ? "ON PROGRAM" : "VIEW LIVE →"}</em>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="camera-live-private-note">Your browsing is private. Tapping an angle never changes the shared film.</p>
               </div>
-            ))}
-          </div>
+            )}
+          </section>
         )}
         {!cameraStream && <div className="camera-aurora" aria-hidden="true" />}
         <header className="camera-topbar">
@@ -1471,9 +1560,9 @@ export default function CrowdCutApp() {
 
         {recording && (
           <div className="camera-view-toggle" role="group" aria-label="Choose camera monitor">
-            <button className={cameraViewMode === "mine" ? "selected" : ""} onClick={() => setCameraViewMode("mine")}>MY ANGLE</button>
-            <button className={cameraViewMode === "live" ? "selected" : ""} onClick={() => setCameraViewMode("live")}>
-              LIVE CUT <i aria-hidden="true" />
+            <button className={cameraViewMode === "mine" ? "selected" : ""} onClick={() => { setCameraViewMode("mine"); setCameraFocusedFeedId(""); }}>MY ANGLE</button>
+            <button className={cameraViewMode === "live" ? "selected" : ""} onClick={() => { setCameraViewMode("live"); setCameraFocusedFeedId(""); }}>
+              LIVE CUTS <i aria-hidden="true" />
             </button>
             <button className="view-bursts-toggle" onClick={() => setBurstLibraryOpen(true)}>
               BURSTS <b>{burstHistory.length}</b>
@@ -1484,7 +1573,7 @@ export default function CrowdCutApp() {
         <BurstExperience
           phase={burstPhase}
           count={Math.max(lastBurstCount, ownedBurstHistory?.readyCount ?? 0, ownedBurst?.count ?? burst?.count ?? 0)}
-          total={ownedBurstHistory?.expectedCount ?? Math.max(cameraLiveFeeds.length, 1)}
+          total={ownedBurstHistory?.expectedCount ?? Math.max(cameraBrowseFeeds.length, 1)}
         />
 
         {!recording && !clipUrl && (
@@ -1604,9 +1693,13 @@ export default function CrowdCutApp() {
             <div className="empty-beam" aria-hidden="true" />
             <p className="eyebrow">CROWDCUT · PROGRAM VIEW</p>
             <h1>DIRECT THE<br /><em>LIVE FILM.</em></h1>
-            <p>Start the film, scan in real phones, then click any angle to TAKE it live.</p>
-            <button className="program-empty-start" onClick={startProgram} disabled={!programRoomReady || showLive || programStarting}>
-              {!programRoomReady ? "PREPARING LIVE ROOM…" : programStarting ? "OPENING LIVE ROOM…" : showLive ? "FILM IS LIVE · WAITING FOR CAMERAS" : "START FILM"}
+            <p>Start the film, scan in real phones, then click any live angle to show it instantly.</p>
+            <button
+              className="program-empty-start"
+              onClick={sessionStatus === "ended" ? createFreshRoom : startProgram}
+              disabled={!programRoomReady || showLive || programStarting || programStopping}
+            >
+              {!programRoomReady ? "PREPARING LIVE ROOM…" : programStopping ? "STOPPING FILM…" : programStarting ? "OPENING LIVE ROOM…" : showLive ? "FILM IS LIVE · WAITING FOR CAMERAS" : sessionStatus === "ended" ? "START NEW FILM" : "START FILM"}
             </button>
           </div>
         )}
@@ -1629,7 +1722,7 @@ export default function CrowdCutApp() {
           <BrandMark />
           <div className="program-status">
             <span className={`director-mode-badge ${directorAuto ? "auto" : "manual"}`}>{directorAuto ? "AUTO DIRECTOR" : "MANUAL CONTROL"}</span>
-            <StatusPill tone={showLive ? "live" : "ready"}>{showLive ? "PROGRAM LIVE" : "READY"}</StatusPill>
+            <StatusPill tone={showLive ? "live" : sessionStatus === "ended" ? "warn" : "ready"}>{showLive ? "PROGRAM LIVE" : sessionStatus === "ended" ? "FILM ENDED" : "READY"}</StatusPill>
             <span>{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span>
           </div>
         </header>
@@ -1657,14 +1750,14 @@ export default function CrowdCutApp() {
 
         <aside className="multiview-rail" aria-label="Live camera multiview">
           <header>
-            <div><span className={showLive ? "live-dot" : "ready-dot"} /> MULTIVIEW · SELECT ANGLES</div>
+            <div><span className={showLive ? "live-dot" : "ready-dot"} /> LIVE ANGLES · CLICK TO VIEW</div>
             <button className={`rail-mode ${directorAuto ? "auto" : "manual"}`} onClick={toggleDirectorAuto}>
               {directorAuto ? "AUTO ON" : "MANUAL"}
             </button>
           </header>
           <div className="angle-distribution">{STAGE_ANGLES.map((angle) => `${angle[0]}:${feeds.filter((feed) => feed.angle === angle).length}`).join("  ·  ")}</div>
           <div className="selection-summary">
-            <span><b>{selectedFeeds.length}</b>/5 SELECTED · ORDER SET BY YOUR TAPS</span>
+            <span><b>{selectedFeeds.length}</b>/5 IN MULTIVIEW · ORDER SET BY YOUR TAPS</span>
             <button disabled={selectedFeeds.length === 0} onClick={() => setSelectedCameraIds([])}>CLEAR</button>
           </div>
           <div className="multiview-grid">
@@ -1678,25 +1771,30 @@ export default function CrowdCutApp() {
                 >
                   <button
                     className="multiview-select"
-                    onClick={() => toggleCameraSelection(feed)}
-                    aria-pressed={selectedIndex >= 0}
-                    aria-label={`${selectedIndex >= 0 ? "Deselect" : "Select"} ${feed.angle.toLowerCase()} angle ${feed.label}`}
+                    onClick={() => takeFeed(feed)}
+                    aria-label={`View ${feed.angle.toLowerCase()} angle ${feed.label} live`}
                   >
                     <span className="multiview-video"><FeedVideo feed={feed} /></span>
                     <span className="multiview-meta">
                       <b><span>{feed.angle}</span>{feed.label}</b>
-                      <em>{onAir ? "ON AIR" : selectedIndex >= 0 ? `SELECTED ${selectedIndex + 1}` : "SELECT +"}</em>
+                      <em>{onAir ? "SHOWING" : "VIEW LIVE →"}</em>
                     </span>
                   </button>
-                  {selectedIndex >= 0 && <span className="selection-order" aria-hidden="true">{selectedIndex + 1}</span>}
-                  <button className="multiview-take" onClick={() => takeFeed(feed)} aria-label={`Take ${feed.label} full screen now`}>TAKE</button>
+                  <button
+                    className="multiview-add"
+                    onClick={() => toggleCameraSelection(feed)}
+                    aria-pressed={selectedIndex >= 0}
+                    aria-label={`${selectedIndex >= 0 ? "Remove" : "Add"} ${feed.label} ${selectedIndex >= 0 ? "from" : "to"} the multiview`}
+                  >
+                    {selectedIndex >= 0 ? `${selectedIndex + 1} · ADDED` : "+ MULTIVIEW"}
+                  </button>
                 </article>
               );
             }) : (
               <div className="multiview-empty">
                 <span>01</span>
                 <b>NO CAMERAS YET</b>
-                <p>Keep the QR visible. Every phone appears here as a clickable TAKE.</p>
+                <p>Keep the QR visible. Every phone appears here as a live angle you can click immediately.</p>
               </div>
             )}
           </div>
@@ -1733,9 +1831,13 @@ export default function CrowdCutApp() {
           <p>{transportMessage || "Manual is the safe default. Turn AUTO on only when you want the director to cut for you."}</p>
         </div>
         <div className="dock-controls">
-          <button className="dock-button primary start-film-control" onClick={startProgram} disabled={!programRoomReady || showLive || programStarting}>
-            <b>{!programRoomReady ? "PREPARING ROOM…" : programStarting ? "STARTING…" : showLive ? "FILM LIVE" : "START FILM"}</b>
-            <small>{showLive ? `${feeds.length} cameras ready` : programRoomReady ? "Open the Program View" : "Realtime handshake"}</small>
+          <button
+            className={`dock-button primary start-film-control ${showLive ? "stop-film-control" : ""}`}
+            onClick={showLive ? stopProgram : sessionStatus === "ended" ? createFreshRoom : startProgram}
+            disabled={programStarting || programStopping || (!showLive && sessionStatus !== "ended" && !programRoomReady)}
+          >
+            <b>{!programRoomReady ? "PREPARING ROOM…" : programStopping ? "STOPPING…" : programStarting ? "STARTING…" : showLive ? "STOP FILM" : sessionStatus === "ended" ? "START NEW FILM" : "START FILM"}</b>
+            <small>{showLive ? `${feeds.length} cameras live · tap to end` : sessionStatus === "ended" ? "Open a fresh camera room" : programRoomReady ? "Open the Program View" : "Realtime handshake"}</small>
           </button>
           <button className="dock-button secondary host-angle-control" onClick={publishHostAngle} disabled={!programRoomReady || hostAnglePublished || hostPublishing}>
             {hostPublishing ? "OPENING CAMERA…" : hostAnglePublished ? "HOST ANGLE LIVE" : "ADD HOST CAMERA"}

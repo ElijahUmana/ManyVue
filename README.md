@@ -26,10 +26,11 @@ Built for the **OutsideLLMs / Outside Lands** fan-experience challenge, with **C
 
 1. The presenter opens the Program View and starts a live film.
 2. Fans scan one QR code—no account or app install—and tap **Start My Angle**.
-3. Their phones immediately become selectable live cameras. The Program View can hold any deliberately selected **1–5 angle composition**, perform a production Sweep, or let the director choose automatically.
-4. When a phone is selected, that exact participant sees **Your Angle Is Live** and can feel a haptic confirmation.
-5. Anyone can trigger **Burst This Moment**. Every recording phone captures the same shared cue from its physical position while its full personal recording continues uninterrupted.
-6. Each Burst initiator receives a distinct, vertical CrowdCut assembled from their angle and the other real perspectives, while every contributing camera can open the synchronized replay.
+3. Every fan gets **Live Cuts**: a private realtime gallery of every connected angle. They can open any view full screen and return to **My Angle** without changing the shared production.
+4. On the Program View, clicking a camera immediately shows it live. A separate **+ Multiview** control builds deliberate 2–5 angle compositions without conflating browsing and directing.
+5. When a phone appears in the shared film, that exact participant sees **Your Angle Is Live** and can feel a haptic confirmation.
+6. Anyone can trigger **Burst This Moment**. Every recording phone captures the same shared cue from its physical position while its full personal recording continues uninterrupted.
+7. Each Burst initiator receives a distinct, vertical CrowdCut assembled from their angle and the other real perspectives, while every contributing camera can open the synchronized replay.
 
 This is not a heatmap, a wall of surveillance feeds, or a generic video-upload editor. The shared film exists **while the event is happening**, and every person’s physical place in the crowd changes the result they take home.
 
@@ -39,12 +40,14 @@ This is not a heatmap, a wall of surveillance feeds, or a generic video-upload e
 
 The camera opens directly from the QR link. A fan declares whether they are left, center, or right of the stage, then starts recording. Their full-resolution original remains on their device while a live video track enters the room.
 
+While recording, **Live Cuts** shows every connected phone as a realtime visual gallery. Opening an angle is private to that attendee: it never changes the Program View, sends a director command, or interrupts their recording. **My Angle** returns directly to their own camera.
+
 ### 2. Live Crowd Director
 
 The projected Program View is one deliberate production—not a dashboard. It supports:
 
-- **1–5 angles** — tap exact cameras in order, then hold them simultaneously in a production composition.
-- **Instant Take** — put any one camera full screen immediately.
+- **Click to view live** — click any camera tile to show that angle immediately on the Program View.
+- **1–5 angle Multiview** — use the separate add control to choose exact cameras in order, then hold them simultaneously in a production composition.
 - **Slow Sweep** — a polished crossfade, directional wipe, and dolly through selected phones that lands on a deliberate hero.
 - **Auto Director** — Convex selects healthy, stage-diverse cameras on a predictable live cadence.
 
@@ -158,7 +161,7 @@ flowchart TB
 
 | Convex responsibility | Concrete implementation | What the audience sees |
 | --- | --- | --- |
-| Session lifecycle | `sessions.create`, `startLive`, `endLive` | One QR opens the correct live production; late joins do not restart it. |
+| Session lifecycle | `sessions.create`, `startLive`, `endLive` | One QR opens the correct live production; late joins do not restart it; **Stop Film** ends the session and safely closes recording cameras. |
 | Anonymous secure participation | Random participant/host capabilities are SHA-256 hashed before storage | A fan joins in one tap without accounts, while privileged host mutations remain protected. |
 | Realtime camera presence | `beginRecording`, sequenced heartbeats, media health, and a five-second expiry cron | New phones appear live; stopped or stale phones disappear without breaking the film. |
 | Authoritative direction | `scheduleScene` and `scheduleAutoScene` commit a layout, camera IDs, revision, and future `cutAtServerMs` | The Program View switches perspectives while the selected phone receives its live state from the same revision. |
@@ -253,12 +256,13 @@ The live deployment is [crowdcut-live.ild.chatgpt.site](https://crowdcut-live.il
 2. Click **Start Film**.
 3. Expand the persistent QR code and scan it with at least two phones.
 4. On each phone, choose its physical stage side and tap **Start My Angle**.
-5. Select exact multiview tiles, hold **1, 2, 3, 4, or 5 angles** together, use the separate instant **Take**, then try **Slow Sweep** and **Auto Director**.
-6. Watch the selected phone change to **Your Angle Is Live**.
-7. Click **Burst All Angles** on the Program View—or **Burst This Moment** on any recording phone.
-8. The tapping device confirms its Burst while every other phone silently preserves and uploads its matching `T−3 → T+3` source; all full recordings continue.
-9. Open **View Bursts** on a phone or the laptop. The owner's angle appears first, every other angle appears below, and **Play All Angles** replays them together.
-10. Stop a phone when ready to reveal its locally saved original and personal CrowdCut pipeline.
+5. On a phone, open **Live Cuts**, see every connected angle, tap one to watch it privately, then tap **My Angle** to return. The Program View does not change.
+6. On the laptop, click any camera tile to show it immediately. Use **+ Multiview** to select exact tiles, then hold **1, 2, 3, 4, or 5 angles** together; try **Slow Sweep** and **Auto Director**.
+7. Watch a shown phone change to **Your Angle Is Live**.
+8. Click **Burst All Angles** on the Program View—or **Burst This Moment** on any recording phone.
+9. The tapping device confirms its Burst while every other phone silently preserves and uploads its matching `T−3 → T+3` source; all full recordings continue.
+10. Open **View Bursts** on a phone or the laptop. The owner's angle appears first, every other angle appears below, and **Play All Angles** replays them together.
+11. Click **Stop Film** on the laptop to end the Convex session and safely finalize active camera recordings.
 
 The host Burst button intentionally remains disabled until a real attendee camera is recording. A finished multi-angle artifact requires at least two uploaded perspectives.
 
