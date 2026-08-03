@@ -42,7 +42,7 @@ function BurstReplay({
   playToken,
 }: {
   source: BurstSource;
-  anchor: "mine" | "program" | false;
+  anchor: "mine" | "host" | "lead" | false;
   playToken: number;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -100,8 +100,8 @@ function BurstReplay({
       </div>
       <div className="burst-replay-meta">
         <div>
-          <p>{anchor === "mine" ? "MY ANGLE · ANCHOR" : anchor === "program" ? "PROGRAM ANCHOR" : "CROWD ANGLE"}</p>
-          <b>{anchor === "mine" ? "The moment from where I stood" : anchor === "program" ? "Lead saved perspective" : `CAM ${source.participantId.slice(-4).toUpperCase()}`}</b>
+          <p>{anchor === "mine" ? "MY ANGLE · ANCHOR" : anchor === "host" ? "HOST ANGLE · ANCHOR" : anchor === "lead" ? "LEAD SAVED ANGLE" : "CROWD ANGLE"}</p>
+          <b>{anchor === "mine" ? "The moment from where I stood" : anchor === "host" ? "The published laptop camera" : anchor === "lead" ? "First available synchronized perspective" : `CAM ${source.participantId.slice(-4).toUpperCase()}`}</b>
         </div>
         <a href={source.asset.url} download={`crowdcut-burst-${source.participantId}.webm`}>
           DOWNLOAD
@@ -128,6 +128,7 @@ export function BurstLibrary({
 }) {
   const [selectedId, setSelectedId] = useState("");
   const [assets, setAssets] = useState<ListedMediaAsset[]>([]);
+  const [loadedBurstId, setLoadedBurstId] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [playToken, setPlayToken] = useState(0);
@@ -143,6 +144,7 @@ export function BurstLibrary({
     setMessage("");
     try {
       setAssets(await listBurstAssets(sessionId, selectedBurstId));
+      setLoadedBurstId(selectedBurstId);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The saved Burst angles could not be loaded.");
     } finally {
@@ -154,7 +156,10 @@ export function BurstLibrary({
     if (!open || !selectedBurstId) return;
     let cancelled = false;
     void listBurstAssets(sessionId, selectedBurstId).then((next) => {
-      if (!cancelled) setAssets(next);
+      if (!cancelled) {
+        setAssets(next);
+        setLoadedBurstId(selectedBurstId);
+      }
     }).catch((error: unknown) => {
       if (!cancelled) setMessage(error instanceof Error ? error.message : "The saved Burst angles could not be loaded.");
     });
@@ -162,6 +167,7 @@ export function BurstLibrary({
   }, [open, selectedBurstId, sessionId]);
 
   const sources = useMemo(() => {
+    if (loadedBurstId !== selectedBurstId) return [];
     const perParticipant = new Map<string, BurstSource>();
     for (const asset of assets) {
       const source = asBurstSource(asset);
@@ -172,7 +178,7 @@ export function BurstLibrary({
       if (right.participantId === ownerParticipantId) return 1;
       return left.participantId.localeCompare(right.participantId);
     });
-  }, [assets, ownerParticipantId]);
+  }, [assets, loadedBurstId, ownerParticipantId, selectedBurstId]);
 
   useEffect(() => {
     if (!open || !selectedBurstId || sources.length >= selectedExpectedCount) return;
@@ -185,6 +191,7 @@ export function BurstLibrary({
   const exactOwner = sources.find((source) => source.participantId === ownerParticipantId);
   const owner = exactOwner ?? (programView ? sources[0] : undefined);
   const crowd = sources.filter((source) => source.participantId !== owner?.participantId);
+  const missingAngleCount = Math.max(0, selectedExpectedCount - sources.length);
 
   return (
     <section className="burst-library" role="dialog" aria-modal="true" aria-label="Saved CrowdCut Bursts">
@@ -202,7 +209,12 @@ export function BurstLibrary({
             type="button"
             key={entry.id}
             className={entry.id === selected?.id ? "selected" : ""}
-            onClick={() => setSelectedId(entry.id)}
+            onClick={() => {
+              setSelectedId(entry.id);
+              setAssets([]);
+              setLoadedBurstId("");
+              setMessage("");
+            }}
           >
             <span>BURST {String(bursts.length - index).padStart(2, "0")}</span>
             <b>{clockLabel(entry.at)}</b>
@@ -236,7 +248,11 @@ export function BurstLibrary({
 
           {message && <p className="burst-library-error">{message}</p>}
           {owner ? (
-            <BurstReplay source={owner} anchor={exactOwner ? "mine" : "program"} playToken={playToken} />
+            <BurstReplay
+              source={owner}
+              anchor={programView ? (exactOwner ? "host" : "lead") : "mine"}
+              playToken={playToken}
+            />
           ) : (
             <div className="burst-owner-waiting">
               <i />
@@ -252,10 +268,16 @@ export function BurstLibrary({
             {crowd.map((source) => (
               <BurstReplay key={source.participantId} source={source} anchor={false} playToken={playToken} />
             ))}
-            {!crowd.length && (
+            {!crowd.length && missingAngleCount > 0 && (
               <div className="burst-library-empty compact">
                 <b>WAITING FOR THE CROWD</b>
-                <p>Other phones are uploading their matching T−3 to T+3 windows now.</p>
+                <p>{missingAngleCount} active {missingAngleCount === 1 ? "camera is" : "cameras are"} still uploading the matching T−3 to T+3 window.</p>
+              </div>
+            )}
+            {!crowd.length && missingAngleCount === 0 && (
+              <div className="burst-library-empty compact complete">
+                <b>ALL ACTIVE ANGLES SAVED</b>
+                <p>This Burst had one active camera. Nothing is missing from the synchronized replay.</p>
               </div>
             )}
           </div>

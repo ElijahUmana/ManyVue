@@ -29,7 +29,7 @@ Built for the **OutsideLLMs / Outside Lands** fan-experience challenge, with **C
 3. Their phones immediately become selectable live cameras. The Program View can hold any deliberately selected **1–5 angle composition**, perform a production Sweep, or let the director choose automatically.
 4. When a phone is selected, that exact participant sees **Your Angle Is Live** and can feel a haptic confirmation.
 5. Anyone can trigger **Burst This Moment**. Every recording phone captures the same shared cue from its physical position while its full personal recording continues uninterrupted.
-6. Each contributor receives a distinct, vertical CrowdCut assembled from their angle and the other real perspectives.
+6. Each Burst initiator receives a distinct, vertical CrowdCut assembled from their angle and the other real perspectives, while every contributing camera can open the synchronized replay.
 
 This is not a heatmap, a wall of surveillance feeds, or a generic video-upload editor. The shared film exists **while the event is happening**, and every person’s physical place in the crowd changes the result they take home.
 
@@ -54,19 +54,21 @@ The camera selected by the room and the phone receiving the live confirmation ar
 
 The presenter or any recording attendee can tap a Burst immediately—there is no room-wide countdown. From the instant **Start My Angle** begins, each phone continuously maintains overlapping, independently playable low-bitrate recordings. Convex snapshots the eligible camera set at tap time and reactively fans out one shared anchor.
 
-Each phone then:
+Every eligible phone silently:
 
 - selects the complete rolling segment containing exactly **T−3 seconds through T+3 seconds**;
 - acknowledges that its real footage exists;
 - uploads its small Burst source without stopping the main recording;
 - registers the asset against the correct participant and Burst; and
-- immediately begins waiting for the other synchronized perspectives.
+- contributes its source without interrupting or changing its live camera UI.
+
+Only the device that tapped receives the Burst capture feedback. The Program View and every other camera keep showing exactly what they were already showing.
 
 **View Bursts** is available on every camera and the Program View. It places the viewer's saved angle—or the Program's lead angle—at the top, with every other saved perspective in a gallery underneath. **Play All Angles** seeks every clip to the same `T−3` point and starts them together as a synchronized multiview.
 
 ### 4. My CrowdCut
 
-Once at least two real sources arrive, each participant gets a personalized edit:
+Once at least two real sources arrive, the Burst initiator gets a personalized edit:
 
 - the owner’s camera anchors the cut;
 - OpenAI returns a schema-validated edit recipe;
@@ -94,15 +96,16 @@ flowchart TB
     Sessions["Sessions + hashed host capabilities"]
     Presence["Participants + recording state<br/>heartbeats + media health"]
     Director["Scene timeline<br/>Hero / Duo / Sweep + cutAtServerMs"]
-    Reactive["programState reactive query<br/>one shared revision for every screen"]
+    Reactive["programState reactive query<br/>director scenes only"]
     Bursts["Burst clustering + expected camera snapshot<br/>markers + deadlines + acknowledgements"]
+    Capture["activeCaptureAnchor protected query<br/>private timing signal per expected camera"]
     Assets["Asset ownership + contribution readiness<br/>idempotent external upload registration"]
     Cron["Presence expiry cron<br/>removes stale cameras safely"]
 
     Sessions --> Presence
     Presence --> Director
     Director --> Reactive
-    Bursts --> Reactive
+    Bursts --> Capture
     Assets --> Bursts
     Cron --> Presence
   end
@@ -127,6 +130,9 @@ flowchart TB
   Reactive -- "reactive updates" --> PhoneB
   Reactive -- "reactive updates" --> PhoneN
   Reactive -- "reactive updates" --> Program
+  Capture -- "silent T−3 → T+3 capture cue" --> PhoneA
+  Capture -- "silent T−3 → T+3 capture cue" --> PhoneB
+  Capture -- "silent T−3 → T+3 capture cue" --> Program
 
   PhoneA -- "encrypted live video" --> LiveKit
   PhoneB -- "encrypted live video" --> LiveKit
@@ -145,7 +151,7 @@ flowchart TB
   Shotstack --> Download
 
   classDef convex fill:#eaff2f,color:#090909,stroke:#ffffff,stroke-width:2px;
-  class Sessions,Presence,Director,Reactive,Bursts,Assets,Cron convex;
+  class Sessions,Presence,Director,Reactive,Bursts,Capture,Assets,Cron convex;
 ```
 
 ### What Convex visibly controls
@@ -156,8 +162,9 @@ flowchart TB
 | Anonymous secure participation | Random participant/host capabilities are SHA-256 hashed before storage | A fan joins in one tap without accounts, while privileged host mutations remain protected. |
 | Realtime camera presence | `beginRecording`, sequenced heartbeats, media health, and a five-second expiry cron | New phones appear live; stopped or stale phones disappear without breaking the film. |
 | Authoritative direction | `scheduleScene` and `scheduleAutoScene` commit a layout, camera IDs, revision, and future `cutAtServerMs` | The Program View switches perspectives while the selected phone receives its live state from the same revision. |
-| Reactive fan-out | Every screen subscribes to `director.programState` with `ConvexClient.onUpdate` | Joins, cuts, Burst progress, and reconnects arrive without polling or refreshing. |
-| Burst coordination | `trigger` / `triggerByHost` snapshot active attendee cameras and create contribution records | One action reaches all eligible phones; each contributes a different real angle to the same moment. |
+| Reactive director fan-out | Every screen subscribes to `director.programState` with `ConvexClient.onUpdate` | Joins, cuts, and reconnects arrive without polling; a participant Burst cannot mutate the Program View. |
+| Private Burst fan-out | Each recording camera subscribes to capability-protected `bursts.activeCaptureAnchor` | Only expected cameras receive the immutable timing cue; passive contributors upload silently while only the initiator sees feedback. |
+| Burst coordination | `trigger` / `triggerByHost` snapshot every active recording camera—including a published host angle—and create contribution records | One action preserves every real view at the same moment without switching the live film. |
 | Truthful contribution state | `acknowledgePreserved` distinguishes locally preserved footage from uploaded footage | “Captured” and “uploaded” are real states, not optimistic animation. |
 | Asset provenance | `registerExternalBurstUpload` binds an HTTPS clip to its authenticated participant and Burst | Personal edits use only the cameras that actually contributed to that moment. |
 | Idempotency and ordering | Client sequence numbers, scene idempotency keys, Burst marker IDs, and stable asset IDs | Retries and reconnects do not create duplicate people, cuts, clips, or renders. |
@@ -203,9 +210,9 @@ sequenceDiagram
   A->>A: continuously retain overlapping playable segments
   B->>B: continuously retain overlapping playable segments
   Host->>C: bursts.triggerByHost()
-  C->>C: snapshot active non-presenter cameras
-  C-->>A: latestBurst includes A
-  C-->>B: latestBurst includes B
+  C->>C: snapshot every active recording camera
+  C-->>A: protected activeCaptureAnchor for A
+  C-->>B: protected activeCaptureAnchor for B
   A->>A: select complete T-3 to T+3 segment
   B->>B: select complete T-3 to T+3 segment
   A->>C: acknowledgePreserved()

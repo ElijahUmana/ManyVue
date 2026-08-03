@@ -13,6 +13,23 @@ import { sceneLayout, sceneSource } from "./validators";
 import { normalizeSceneCutAt, validateSceneRecipe } from "../lib/realtime/scenes";
 import { planAutomaticScene } from "../lib/realtime/autodirector";
 
+// Retain the legacy result type while returning no Burst payload at runtime so
+// existing clients can roll over to bursts.activeCaptureAnchor without a
+// flag-day generated-type break. Burst capture and director state are separate
+// realtime domains.
+type LegacyProgramBurst = {
+  _id: Id<"bursts">;
+  anchorServerMs: number;
+  windowStartServerMs: number;
+  windowEndServerMs: number;
+  initiatorParticipantIds: Id<"participants">[];
+  expectedParticipantIds: Id<"participants">[];
+  readyContributionCount: number;
+  uploadedReadyContributionCount: number;
+  acknowledgedContributionCount: number;
+  status: Doc<"bursts">["status"];
+};
+
 async function commitScene(
   ctx: MutationCtx,
   session: Doc<"sessions">,
@@ -155,38 +172,14 @@ export const programState = query({
       .withIndex("by_session", (q) => q.eq("sessionId", session._id))
       .collect();
     const scene = session.currentSceneId ? await ctx.db.get(session.currentSceneId) : null;
-    const latestBurst = await ctx.db
-      .query("bursts")
-      .withIndex("by_session_anchor", (q) => q.eq("sessionId", session._id))
-      .order("desc")
-      .first();
-    const actionableBurst =
-      latestBurst && now <= latestBurst.contributionDeadlineMs + 5_000 ? latestBurst : null;
     return {
       serverNowMs: now,
       session: publicSession(session),
       scene,
       liveCameras: participants.filter((participant) => participantIsLiveCamera(participant, now)).map(publicParticipant),
-      latestBurst: actionableBurst
-        ? {
-            _id: actionableBurst._id,
-            anchorServerMs: actionableBurst.anchorServerMs,
-            windowStartServerMs: actionableBurst.windowStartServerMs,
-            windowEndServerMs: actionableBurst.windowEndServerMs,
-            initiatorParticipantIds: actionableBurst.initiatorParticipantIds,
-            expectedParticipantIds: actionableBurst.expectedParticipantIds,
-            // Existing clients use readyContributionCount for the live Burst
-            // counter. A preserved rolling buffer is ready for the realtime
-            // preview even before its high-quality upload completes.
-            readyContributionCount: Math.max(
-              actionableBurst.readyContributionCount,
-              actionableBurst.acknowledgedContributionCount ?? 0,
-            ),
-            uploadedReadyContributionCount: actionableBurst.readyContributionCount,
-            acknowledgedContributionCount: actionableBurst.acknowledgedContributionCount ?? 0,
-            status: actionableBurst.status,
-          }
-        : null,
+      // Deprecated compatibility field. Program View never receives capture
+      // anchors, so a participant Burst cannot alter its visual/status state.
+      latestBurst: null as LegacyProgramBurst | null,
     };
   },
 });

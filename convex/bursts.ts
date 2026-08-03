@@ -16,9 +16,10 @@ async function activeRecordingParticipants(ctx: MutationCtx, sessionId: Id<"sess
     .query("participants")
     .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
     .collect();
-  return participants.filter(
-    (participant) => participant.role !== "presenter" && participantIsLiveCamera(participant, now),
-  );
+  // Role does not determine whether a device is a camera. A presenter that
+  // explicitly publishes and records a host angle must be captured alongside
+  // every other live camera at the anchor.
+  return participants.filter((participant) => participantIsLiveCamera(participant, now));
 }
 
 function assertClientMarkerId(clientMarkerId: string) {
@@ -272,6 +273,42 @@ export const mine = query({
     return await Promise.all(
       markers.map(async (marker) => ({ marker, burst: await ctx.db.get(marker.burstId) })),
     );
+  },
+});
+
+/**
+ * The capture-only realtime channel for a recording device.
+ *
+ * Director state deliberately does not expose Burst activity. An authenticated
+ * camera receives only the immutable timing information it needs to preserve
+ * its rolling buffer; no Burst status, counts, layout, or scene information is
+ * published through this query.
+ */
+export const activeCaptureAnchor = query({
+  args: {
+    participantId: v.id("participants"),
+    participantCapability: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await assertParticipant(ctx, args.participantId, args.participantCapability);
+    const now = Date.now();
+    const recent = await ctx.db
+      .query("bursts")
+      .withIndex("by_session_anchor", (q) => q.eq("sessionId", participant.sessionId))
+      .order("desc")
+      .take(8);
+    const active = recent.find((burst) =>
+      burst.expectedParticipantIds.includes(participant._id) && now <= burst.contributionDeadlineMs,
+    );
+    if (!active) return null;
+
+    return {
+      burstId: active._id,
+      anchorServerMs: active.anchorServerMs,
+      windowStartServerMs: active.windowStartServerMs,
+      windowEndServerMs: active.windowEndServerMs,
+      initiatedByParticipant: active.initiatorParticipantIds.includes(participant._id),
+    };
   },
 });
 
