@@ -399,8 +399,15 @@ export default function CrowdCutApp() {
             },
           });
           if (state.scene.reason) {
-            const mode = state.scene.source === "ai" ? "OPENAI VISION" : state.scene.source === "manual" ? "MANUAL" : "AI AUTO";
-            setDirectorDecision(`${mode} · ${state.scene.reason.toUpperCase()}`);
+            if (/\bBURST\b/iu.test(state.scene.reason)) {
+              // Old deployments briefly wrote Burst spectacle labels into the
+              // persisted director scene. Never resurrect those labels: Burst
+              // capture is now completely separate from Program View state.
+              setDirectorDecision("MANUAL HOLD · CLICK ANY CAMERA TO TAKE IT LIVE");
+            } else {
+              const mode = state.scene.source === "ai" ? "OPENAI VISION" : state.scene.source === "manual" ? "MANUAL" : "AI AUTO";
+              setDirectorDecision(`${mode} · ${state.scene.reason.toUpperCase()}`);
+            }
           }
         }
       }, (error) => setTransportMessage(`Convex realtime error: ${error.message}`));
