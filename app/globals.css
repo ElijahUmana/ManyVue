@@ -17,6 +17,121 @@ button, input, a { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 
+/* Cinematic host entrance. Camera QR links bypass this screen. */
+.host-landing {
+  position: relative;
+  min-height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+  background: #020205;
+}
+.host-landing-backdrop {
+  position: absolute;
+  z-index: -3;
+  inset: -6%;
+  background: url("/og.png") center / cover no-repeat;
+  filter: blur(28px) saturate(1.18);
+  opacity: .52;
+  transform: scale(1.05);
+}
+.host-landing-art {
+  z-index: -2;
+  object-fit: contain;
+  object-position: center;
+  filter: saturate(1.04) contrast(1.025);
+  animation: hostArtReveal 1.15s cubic-bezier(.16,1,.3,1) both;
+}
+.host-landing-shade {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(2,2,5,.06) 0%, transparent 52%, rgba(2,2,5,.9) 100%),
+    radial-gradient(circle at 50% 50%, transparent 48%, rgba(2,2,5,.28) 100%);
+  pointer-events: none;
+}
+.host-landing-entry {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: max(34px, calc(env(safe-area-inset-bottom) + 24px));
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(390px, calc(100vw - 36px));
+  transform: translateX(-50%);
+  animation: hostEntryReveal .9s .35s cubic-bezier(.16,1,.3,1) both;
+}
+.host-landing-entry .eyebrow {
+  color: var(--acid);
+  text-shadow: 0 2px 18px rgba(0,0,0,.95);
+}
+.host-enter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  width: 100%;
+  min-height: 68px;
+  padding: 0 28px;
+  border: 1px solid rgba(245,255,66,.88);
+  border-radius: 999px;
+  background: var(--acid);
+  color: var(--ink);
+  box-shadow: 0 18px 70px rgba(0,0,0,.55), 0 0 42px rgba(245,255,66,.25);
+  text-decoration: none;
+  transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+}
+.host-enter span {
+  font-size: 18px;
+  font-weight: 950;
+  letter-spacing: .16em;
+}
+.host-enter i {
+  font-family: var(--font-mono), monospace;
+  font-size: 24px;
+  font-style: normal;
+  transition: transform .2s ease;
+}
+.host-enter:hover,
+.host-enter:focus-visible {
+  outline: none;
+  background: white;
+  transform: translateY(-3px);
+  box-shadow: 0 24px 82px rgba(0,0,0,.65), 0 0 58px rgba(245,255,66,.34);
+}
+.host-enter:hover i,
+.host-enter:focus-visible i { transform: translateX(5px); }
+.host-landing-entry small {
+  color: rgba(255,255,255,.72);
+  font-family: var(--font-mono), monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-shadow: 0 2px 15px #000;
+}
+
+@keyframes hostArtReveal {
+  from { opacity: 0; transform: scale(1.035); filter: saturate(.7) contrast(.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes hostEntryReveal {
+  from { opacity: 0; transform: translate(-50%, 24px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (max-width: 720px) {
+  .host-landing-art { object-position: center 36%; }
+  .host-landing-shade { background: linear-gradient(180deg, rgba(2,2,5,.1), transparent 38%, rgba(2,2,5,.96) 86%); }
+  .host-landing-entry { bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px)); }
+  .host-enter { min-height: 60px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .host-landing-art,
+  .host-landing-entry { animation: none; }
+}
+
 .eyebrow {
   margin: 0;
   font-family: var(--font-mono), monospace;
