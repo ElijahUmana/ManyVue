@@ -16,6 +16,10 @@
   <a href="#run-the-live-demo">Demo flow</a>
   ·
   <a href="#run-locally">Run locally</a>
+  ·
+  <a href="docs/ARCHITECTURE_DEMO_SCRIPT.md">15-second architecture script</a>
+  ·
+  <a href="output/pdf/CrowdCut_Next_Steps.pdf">Festival roadmap</a>
 </p>
 
 CrowdCut turns the phones already recording a concert into one synchronized camera crew. Fans keep their own original recording, watch their perspective enter a shared live production, capture a musical instant across every active phone, and receive a personal multi-angle film made from the real crowd around them.
@@ -85,6 +89,34 @@ AI directs the footage. It does not fabricate the event.
 > **Convex owns the shared truth; LiveKit moves the live pixels.**
 
 That boundary is intentional. Raw video is high-bandwidth and belongs on a media plane. Everything that makes those independent phones behave like one coherent production—identity, presence, recording state, scene selection, synchronized Burst membership, contribution readiness, and personalization—belongs in Convex.
+
+### Convex in one glance
+
+This is the screen-ready version: every device can move video independently, but **Convex is the authority that makes all devices behave like one production**.
+
+```mermaid
+flowchart LR
+  Phones["Fan phones<br/>record + browse Live Cuts"]
+  Program["Program View<br/>direct the shared film"]
+  Convex["CONVEX REALTIME CONTROL PLANE<br/>presence · scenes · Burst anchors<br/>readiness · ownership · lifecycle"]
+  LiveKit["LiveKit media plane<br/>WebRTC video tracks"]
+  Artifact["R2 + OpenAI + Shotstack<br/>personal shareable CrowdCut"]
+
+  Phones -->|"join · heartbeat · trigger Burst"| Convex
+  Program -->|"start · direct · stop"| Convex
+  Convex -->|"reactive state to every screen"| Phones
+  Convex -->|"authoritative scene + progress"| Program
+  Phones <-->|"live pixels only"| LiveKit
+  LiveKit --> Program
+  Convex -->|"exact cameras + T−3/T+3 cue"| Artifact
+  Phones -->|"real synchronized microclips"| Artifact
+
+  style Convex fill:#eaff2f,color:#090909,stroke:#ffffff,stroke-width:3px
+```
+
+The media path can scale or change providers without changing the product's shared truth. Remove Convex and there is no coherent crew, no authoritative live cut, no exact shared Burst, and no trustworthy per-person artifact.
+
+### Detailed production architecture
 
 ```mermaid
 flowchart TB
