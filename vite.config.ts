@@ -32,7 +32,7 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async ({ command }) => {
+export default defineConfig(async () => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -41,12 +41,6 @@ export default defineConfig(async ({ command }) => {
 
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import("@cloudflare/vite-plugin");
-  // Current local Miniflare still requires this flag explicitly. Sites
-  // production rejects it because its runtime now enables Node compatibility
-  // by default, so only the Vite dev server receives the flag.
-  const runtimeBindingConfig = command === "serve"
-    ? { ...localBindingConfig, compatibility_flags: ["nodejs_compat"] }
-    : localBindingConfig;
 
   return {
     server: isCodexSeatbeltSandbox
@@ -57,7 +51,7 @@ export default defineConfig(async ({ command }) => {
       sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: runtimeBindingConfig,
+        config: localBindingConfig,
       }),
     ],
   };
