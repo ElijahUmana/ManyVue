@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="public/og.png" alt="CrowdCut Live — the crowd is the camera" width="100%" />
+  <img src="public/og.png" alt="ManyVue Live — the crowd is the camera" width="100%" />
 </p>
 
-<h1 align="center">CrowdCut Live</h1>
+<h1 align="center">ManyVue Live</h1>
 
 <p align="center">
   <strong>Record your angle. See it go live. Take home the crowd.</strong>
 </p>
 
 <p align="center">
-  <a href="https://crowdcut-live.ild.chatgpt.site/"><strong>Open the live experience ↗</strong></a>
+  <a href="https://manyvue-live.ild.chatgpt.site/"><strong>Open the live experience ↗</strong></a>
   ·
   <a href="#the-convex-centered-architecture">Architecture</a>
   ·
@@ -19,10 +19,10 @@
   ·
   <a href="docs/ARCHITECTURE_DEMO_SCRIPT.md">15-second architecture script</a>
   ·
-  <a href="output/pdf/CrowdCut_Next_Steps.pdf">Festival roadmap</a>
+  <a href="output/pdf/ManyVue_Next_Steps.pdf">Festival roadmap</a>
 </p>
 
-CrowdCut turns the phones already recording a concert into one synchronized camera crew. Fans keep their own original recording, watch their perspective enter a shared live production, capture a musical instant across every active phone, and receive a personal multi-angle film made from the real crowd around them.
+ManyVue turns the phones already recording a concert into one synchronized camera crew. Fans keep their own original recording, watch their perspective enter a shared live production, capture a musical instant across every active phone, and receive a personal multi-angle film made from the real crowd around them.
 
 Built for the **OutsideLLMs / Outside Lands** fan-experience challenge, with **Convex as the realtime control plane** coordinating the room.
 
@@ -34,7 +34,7 @@ Built for the **OutsideLLMs / Outside Lands** fan-experience challenge, with **C
 4. On the Program View, clicking a camera immediately shows it live. A separate **+ Multiview** control builds deliberate 2–5 angle compositions without conflating browsing and directing.
 5. When a phone appears in the shared film, that exact participant sees **Your Angle Is Live** and can feel a haptic confirmation.
 6. Anyone can trigger **Burst This Moment**. Every recording phone captures the same shared cue from its physical position while its full personal recording continues uninterrupted.
-7. Each Burst initiator receives a distinct, vertical CrowdCut assembled from their angle and the other real perspectives, while every contributing camera can open the synchronized replay.
+7. Each Burst initiator receives a distinct, vertical ManyVue assembled from their angle and the other real perspectives, while every contributing camera can open the synchronized replay.
 
 This is not a heatmap, a wall of surveillance feeds, or a generic video-upload editor. The shared film exists **while the event is happening**, and every person’s physical place in the crowd changes the result they take home.
 
@@ -73,41 +73,41 @@ Only the device that tapped receives the Burst capture feedback. The Program Vie
 
 **View Bursts** is available on every camera and the Program View. It places the viewer's saved angle—or the Program's lead angle—at the top, with every other saved perspective in a gallery underneath. **Play All Angles** seeks every clip to the same `T−3` point and starts them together as a synchronized multiview.
 
-### 4. My CrowdCut
+### 4. My ManyVue
 
 Once at least two real sources arrive, the Burst initiator gets a personalized edit:
 
 - the owner’s camera anchors the cut;
 - OpenAI returns a schema-validated edit recipe;
 - Shotstack renders a real 9:16 MP4 from the uploaded footage; and
-- the attendee can download the finished CrowdCut or their untouched original.
+- the attendee can download the finished ManyVue or their untouched original.
 
 AI directs the footage. It does not fabricate the event.
 
 ## The Convex-centered architecture
 
-> **Convex owns the shared truth; LiveKit moves the live pixels.**
+> **Convex is the authoritative distributed coordination layer for the entire production.**
 
-That boundary is intentional. Raw video is high-bandwidth and belongs on a media plane. Everything that makes those independent phones behave like one coherent production—identity, presence, recording state, scene selection, synchronized Burst membership, contribution readiness, and personalization—belongs in Convex.
+Convex models ManyVue as a capability-guarded, auditable state machine. Everything that makes independently connected phones behave like one coherent production—leased presence, recording state, revisioned scene selection, server-timed cuts, synchronized Burst membership, contribution readiness, asset provenance, and personal ownership—is committed and reactively distributed through Convex.
 
 ### Convex in one glance
 
-This is the screen-ready version: every device can move video independently, but **Convex is the authority that makes all devices behave like one production**.
+This is the screen-ready version: **every mutation advances authoritative production state, and every subscribed client converges on that state without polling**.
 
 ```mermaid
 flowchart LR
   Phones["Fan phones<br/>record + browse Live Cuts"]
   Program["Program View<br/>direct the shared film"]
-  Convex["CONVEX REALTIME CONTROL PLANE<br/>presence · scenes · Burst anchors<br/>readiness · ownership · lifecycle"]
-  LiveKit["LiveKit media plane<br/>WebRTC video tracks"]
-  Artifact["R2 + OpenAI + Shotstack<br/>personal shareable CrowdCut"]
+  Convex["CONVEX DISTRIBUTED STATE MACHINE<br/>capability guards · heartbeat leases · scene revisions<br/>private capture anchors · idempotent readiness · ownership"]
+  Media["Realtime media transport<br/>independent encrypted video tracks"]
+  Artifact["R2 + OpenAI + Shotstack<br/>personal shareable ManyVue"]
 
   Phones -->|"join · heartbeat · trigger Burst"| Convex
   Program -->|"start · direct · stop"| Convex
   Convex -->|"reactive state to every screen"| Phones
   Convex -->|"authoritative scene + progress"| Program
-  Phones <-->|"live pixels only"| LiveKit
-  LiveKit --> Program
+  Phones <-->|"independent video tracks"| Media
+  Media --> Program
   Convex -->|"exact cameras + T−3/T+3 cue"| Artifact
   Phones -->|"real synchronized microclips"| Artifact
 
@@ -146,7 +146,7 @@ flowchart TB
   end
 
   subgraph Media["Live media plane"]
-    LiveKit["LiveKit Cloud SFU<br/>WebRTC video tracks only"]
+    Transport["Realtime media transport<br/>encrypted video tracks only"]
     Local["Browser MediaRecorder + IndexedDB<br/>durable personal original"]
   end
 
@@ -154,7 +154,7 @@ flowchart TB
     R2["ChatGPT Sites / Cloudflare R2<br/>small real Burst sources"]
     OpenAI["OpenAI<br/>live shot choice + structured edit recipe"]
     Shotstack["Shotstack production renderer<br/>vertical MP4"]
-    Download["Personal downloadable CrowdCut"]
+    Download["Personal downloadable ManyVue"]
   end
 
   PhoneA -- "join · beginRecording · heartbeat · Burst" --> Control
@@ -169,10 +169,10 @@ flowchart TB
   Capture -- "silent T−3 → T+3 capture cue" --> PhoneB
   Capture -- "silent T−3 → T+3 capture cue" --> Program
 
-  PhoneA -- "encrypted live video" --> LiveKit
-  PhoneB -- "encrypted live video" --> LiveKit
-  PhoneN -- "encrypted live video" --> LiveKit
-  LiveKit -- "selected high-quality tracks" --> Program
+  PhoneA -- "encrypted live video" --> Transport
+  PhoneB -- "encrypted live video" --> Transport
+  PhoneN -- "encrypted live video" --> Transport
+  Transport -- "selected high-quality tracks" --> Program
   PhoneA --> Local
   PhoneB --> Local
 
@@ -206,7 +206,7 @@ flowchart TB
 
 ### Why removing Convex removes the product
 
-Without Convex, CrowdCut would degrade into unrelated livestreams and uploaded clips. There would be no authoritative answer to:
+Without Convex, ManyVue would degrade into unrelated livestreams and uploaded clips. There would be no authoritative answer to:
 
 - Which phones currently constitute the camera crew?
 - Which angle is on air, and which specific phone must react?
@@ -226,16 +226,16 @@ sequenceDiagram
   participant C as Convex
   participant A as Fan phone A
   participant B as Fan phone B
-  participant L as LiveKit
+  participant M as Media transport
   participant R as R2 media storage
   participant AI as OpenAI + Shotstack
 
   Host->>C: sessions.startLive()
   A->>C: participants.join() + beginRecording()
   B->>C: participants.join() + beginRecording()
-  A->>L: publish real camera track
-  B->>L: publish real camera track
-  L-->>Host: subscribe to live perspectives
+  A->>M: publish real camera track
+  B->>M: publish real camera track
+  M-->>Host: subscribe to live perspectives
 
   Host->>C: scheduleScene(Hero / Duo / Sweep, cutAtServerMs)
   C-->>Host: reactive programState revision
@@ -282,7 +282,7 @@ Indexes cover the hot realtime paths: session slug, participant/session membersh
 
 ## Run the live demo
 
-The live deployment is [crowdcut-live.ild.chatgpt.site](https://crowdcut-live.ild.chatgpt.site/).
+The live deployment is [manyvue-live.ild.chatgpt.site](https://manyvue-live.ild.chatgpt.site/).
 
 1. Open the URL on the laptop connected to the main display.
 2. Click **Start Film**.
@@ -319,8 +319,8 @@ The host Burst button intentionally remains disabled until a real attendee camer
 ### Install and start
 
 ```bash
-git clone https://github.com/ElijahUmana/CrowdCut.git
-cd CrowdCut
+git clone https://github.com/ElijahUmana/ManyVue.git
+cd ManyVue
 npm install
 cp .env.example .env.local
 ```
@@ -364,7 +364,7 @@ The focused test suite covers exact rolling `T−3 → T+3` coverage, overlappin
 
 ```text
 app/
-├── CrowdCutApp.tsx                 # Program View + attendee camera experience
+├── ManyVueApp.tsx                 # Program View + attendee camera experience
 ├── BurstLibrary.tsx                # Owner-first synchronized saved Burst replay
 └── api/
     ├── ai/                         # Live director + personal edit recipe

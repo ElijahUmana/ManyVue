@@ -193,9 +193,9 @@ function FeedVideo({ feed, muted = true }: { feed: Feed; muted?: boolean }) {
 
 function BrandMark() {
   return (
-    <div className="brand-mark" aria-label="CrowdCut Live">
+    <div className="brand-mark" aria-label="ManyVue Live">
       <span className="brand-orbit" aria-hidden="true"><i /><i /><i /></span>
-      <span>CROWD<span>CUT</span></span>
+      <span>MANY<span>VUE</span></span>
       <b>LIVE</b>
     </div>
   );
@@ -237,7 +237,7 @@ function BurstExperience({
   );
 }
 
-export default function CrowdCutApp() {
+export default function ManyVueApp() {
   const [booted, setBooted] = useState(false);
   const [view, setView] = useState<"program" | "camera">("program");
   const [sessionId, setSessionId] = useState("outside-live");
@@ -455,7 +455,7 @@ export default function CrowdCutApp() {
       if (!host) {
         window.localStorage.removeItem("crowdcut-host-session");
         host = await client.action(api.sessions.create, {
-          title: "Outside Lands CrowdCut Live",
+          title: "Outside Lands ManyVue Live",
           festivalName: "Outside Lands",
           stageName: "Hackathon Live",
         }) as HostSession;
@@ -802,7 +802,7 @@ export default function CrowdCutApp() {
       }
 
       setArtifactPhase("rendering");
-      setArtifactMessage("Rendering your real multi-angle CrowdCut…");
+      setArtifactMessage("Rendering your real multi-angle ManyVue…");
       for (let attempt = 0; attempt < 14; attempt += 1) {
         await wait(2_000);
         const statusResponse = await fetch(`/api/artifacts/render/status?id=${encodeURIComponent(renderId)}`, { cache: "no-store" });
@@ -819,7 +819,7 @@ export default function CrowdCutApp() {
           setArtifactUrl(status.render.url);
           setUploadState("uploaded");
           setArtifactPhase("ready");
-          setArtifactMessage("Your shareable CrowdCut is ready — every angle is real.");
+          setArtifactMessage("Your shareable ManyVue is ready — every angle is real.");
           renderIdRef.current = "";
           return;
         }
@@ -843,7 +843,7 @@ export default function CrowdCutApp() {
     setArtifactPhase("waiting");
     setArtifactMessage(thumbnailWarning
       ? "Your real Burst clip is uploaded. Waiting for the other synchronized angles…"
-      : "Your angle is uploaded. Building your personal multi-angle CrowdCut…");
+      : "Your angle is uploaded. Building your personal multi-angle ManyVue…");
     if (burstArtifactIdsRef.current.has(marker.id)) return;
     burstArtifactIdsRef.current.add(marker.id);
     await buildArtifact(marker);
@@ -1711,7 +1711,7 @@ export default function CrowdCutApp() {
             {burstPhase === "preserved" && ownedBurst && (
               <p className="camera-burst-preserved"><b>BURST PRESERVED</b> Your synchronized angle uploads now while the full recording continues uninterrupted.</p>
             )}
-            <button className="stop-trigger" onClick={stopCamera}>Stop & build my CrowdCut</button>
+            <button className="stop-trigger" onClick={stopCamera}>Stop & build my ManyVue</button>
             {transportMessage && <p className="inline-message camera-inline-message">{transportMessage}</p>}
           </section>
         )}
@@ -1719,8 +1719,8 @@ export default function CrowdCutApp() {
         {clipUrl && !recording && (
           <section className="artifact-card">
             <p className="eyebrow">YOUR MOMENT IS REAL</p>
-            <h2>{artifactUrl ? "Your CrowdCut is ready." : "Your angle is safe."}</h2>
-            <div className={`artifact-pipeline phase-${artifactPhase}`} aria-label="CrowdCut artifact progress">
+            <h2>{artifactUrl ? "Your ManyVue is ready." : "Your angle is safe."}</h2>
+            <div className={`artifact-pipeline phase-${artifactPhase}`} aria-label="ManyVue artifact progress">
               <span className="complete"><i />SAVED</span>
               <span className={artifactUploadDone ? "complete" : artifactPhase === "uploading" ? "active" : ""}><i />UPLOAD</span>
               <span className={artifactEditDone ? "complete" : (["waiting", "editing"] as ArtifactPhase[]).includes(artifactPhase) ? "active" : ""}><i />AI CUT</span>
@@ -1782,7 +1782,7 @@ export default function CrowdCutApp() {
         )) : (
           <div className="program-empty">
             <div className="empty-beam" aria-hidden="true" />
-            <p className="eyebrow">CROWDCUT · PROGRAM VIEW</p>
+            <p className="eyebrow">MANYVUE · PROGRAM VIEW</p>
             <h1>DIRECT THE<br /><em>LIVE FILM.</em></h1>
             <p>Start the film, scan in real phones, then click any live angle to show it instantly.</p>
             <button
@@ -1829,7 +1829,7 @@ export default function CrowdCutApp() {
           <b>{feeds.length}</b>
         </button>
 
-        <aside className={`persistent-join ${joinExpanded ? "expanded" : "compact"}`} aria-label="Join CrowdCut camera room">
+        <aside className={`persistent-join ${joinExpanded ? "expanded" : "compact"}`} aria-label="Join ManyVue camera room">
           {joinExpanded && (
             <button
               type="button"
@@ -1843,7 +1843,7 @@ export default function CrowdCutApp() {
           )}
           <button className="join-qr" onClick={() => setJoinExpanded(true)} aria-label={joinExpanded ? "Camera join QR code" : "Enlarge camera join QR code"}>
             {qr
-              ? <img src={qr} alt="Scan to join CrowdCut as a camera" />
+              ? <img src={qr} alt="Scan to join ManyVue as a camera" />
               : <span className="qr-loading">CREATING<br />LIVE ROOM…</span>}
           </button>
           <div className="join-details">
@@ -1954,7 +1954,7 @@ export default function CrowdCutApp() {
         </footer>
       </section>
 
-      <section className="director-dock" aria-label="CrowdCut production controls">
+      <section className="director-dock" aria-label="ManyVue production controls">
         <div className="dock-copy">
           <p className="eyebrow">LIVE PRODUCTION</p>
           <h2>{showLive ? directorDecision : "Start the film. Phones join as real cameras."}</h2>

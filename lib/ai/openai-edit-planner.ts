@@ -81,7 +81,7 @@ export function buildOpenAIEditRequest(input: EditRecipeInput, model = DEFAULT_M
       {
         role: "system",
         content: [
-          "You are the CrowdCut post-capture film editor.",
+          "You are the ManyVue post-capture film editor.",
           "Create an energetic but truthful 9:16 concert edit from real supplied sources only.",
           "AI chooses the edit; it never invents footage. Favor view diversity and visible subjects over noisy rapid cutting.",
           "The first and final shots must use the owner camera with role owner.",
@@ -137,7 +137,7 @@ function readableError(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown OpenAI planning failure";
 }
 
-export async function planCrowdCutEdit(
+export async function planManyVueEdit(
   input: EditRecipeInput,
   env: OpenAIPlannerEnv,
   options: { timeoutMs?: number } = {},

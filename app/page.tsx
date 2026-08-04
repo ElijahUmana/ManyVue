@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import CrowdCutApp from "./CrowdCutApp";
+import ManyVueApp from "./CrowdCutApp";
 import HostLanding from "./HostLanding";
 
 export const metadata: Metadata = {
-  title: "CrowdCut Live",
+  title: "ManyVue Live",
   description: "Record your angle. See it go live. Take home the crowd.",
 };
 
@@ -17,7 +17,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
   // Camera QR links and the explicit Program View link must remain direct.
   // Only the clean public host URL receives the cinematic entrance.
-  if (view === "camera" || view === "program") return <CrowdCutApp />;
+  if (view === "camera" || view === "program") return <ManyVueApp />;
 
   return <HostLanding />;
 }

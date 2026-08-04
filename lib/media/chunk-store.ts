@@ -80,7 +80,7 @@ export class MediaChunkStore {
         request.onerror = () =>
           reject(new MediaPersistenceError("Could not open durable media storage.", request.error));
         request.onblocked = () =>
-          reject(new MediaPersistenceError("A previous CrowdCut tab is blocking media recovery."));
+          reject(new MediaPersistenceError("A previous ManyVue tab is blocking media recovery."));
       });
     }
 

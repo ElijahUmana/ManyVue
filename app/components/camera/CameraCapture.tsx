@@ -228,11 +228,11 @@ export function CameraCapture({
       reconnectRef.current?.stop();
       void adapter
         .unpublishCamera(cameraId)
-        .catch((error) => console.error("CrowdCut camera unpublish failed during cleanup.", error));
+        .catch((error) => console.error("ManyVue camera unpublish failed during cleanup.", error));
       if (recorderRef.current?.state !== "inactive") {
         void recorderRef.current
           ?.stop()
-          .catch((error) => console.error("CrowdCut recording finalization failed during cleanup.", error));
+          .catch((error) => console.error("ManyVue recording finalization failed during cleanup.", error));
       }
       streamRef.current?.getTracks().forEach((track) => track.stop());
       if (downloadUrl) URL.revokeObjectURL(downloadUrl);
@@ -412,7 +412,7 @@ export function CameraCapture({
   return (
     <section
       className={`${styles.cameraShell} ${isLive ? styles.isLive : ""}`}
-      aria-label="CrowdCut camera"
+      aria-label="ManyVue camera"
     >
       <video
         ref={videoRef}
@@ -425,7 +425,7 @@ export function CameraCapture({
       <div className={styles.scrim} aria-hidden="true" />
 
       <header className={styles.topBar}>
-        <div className={styles.brand}>CROWDCUT</div>
+        <div className={styles.brand}>MANYVUE</div>
         <div className={`${styles.livePill} ${isLive ? styles.livePillActive : ""}`}>
           <span className={styles.statusDot} aria-hidden="true" />
           {isLive ? "YOUR ANGLE IS LIVE" : isRecording ? "ANGLE READY" : "STANDBY"}

@@ -28,6 +28,55 @@ button { cursor: pointer; }
   isolation: isolate;
   background: #020205;
 }
+.manyvue-hero {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(330px, 43%) 1fr;
+  overflow: hidden;
+  background: #020205;
+  animation: hostArtReveal 1.15s cubic-bezier(.16,1,.3,1) both;
+}
+.manyvue-hero-photo {
+  grid-column: 2;
+  grid-row: 1;
+  background-image: linear-gradient(90deg,#020205 0%,transparent 24%), url("/og.png");
+  background-repeat: no-repeat;
+  background-position: center, right center;
+  background-size: 100% 100%, 173.5% auto;
+  filter: saturate(1.08) contrast(1.04);
+}
+.manyvue-hero-copy {
+  grid-column: 1;
+  grid-row: 1;
+  z-index: 1;
+  align-self: center;
+  padding: clamp(28px,5vw,88px);
+}
+.manyvue-hero-copy p {
+  margin: 0 0 18px;
+  color: var(--acid);
+  font-family: var(--font-mono), monospace;
+  font-size: clamp(11px,1vw,15px);
+  font-weight: 950;
+  letter-spacing: .2em;
+}
+.manyvue-hero-copy h1 {
+  margin: 0;
+  font-size: clamp(58px,7vw,132px);
+  font-weight: 950;
+  line-height: .78;
+  letter-spacing: -.075em;
+}
+.manyvue-hero-copy h1 em { color: var(--pink); font-style: normal; }
+.manyvue-hero-copy span {
+  display: block;
+  max-width: 440px;
+  margin-top: 24px;
+  color: rgba(255,255,255,.7);
+  font-size: clamp(13px,1.15vw,18px);
+  line-height: 1.45;
+}
 .host-landing-backdrop {
   position: absolute;
   z-index: -3;
@@ -129,6 +178,22 @@ button { cursor: pointer; }
 }
 
 @media (orientation: portrait) {
+  .manyvue-hero { grid-template-columns: 1fr; grid-template-rows: minmax(0,56%) minmax(0,44%); }
+  .manyvue-hero-photo {
+    grid-column: 1;
+    grid-row: 1;
+    background-image: linear-gradient(180deg,transparent 62%,#020205 100%), url("/og.png");
+  }
+  .manyvue-hero-copy {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: stretch;
+    padding: clamp(12px,3svh,26px) clamp(20px,7vw,48px) 132px;
+    background: radial-gradient(circle at 90% 10%,rgba(255,54,124,.2),transparent 45%),#020205;
+  }
+  .manyvue-hero-copy p { margin-bottom: 10px; }
+  .manyvue-hero-copy h1 { font-size: clamp(43px,13.5vw,78px); line-height: .81; }
+  .manyvue-hero-copy span { margin-top: 13px; font-size: clamp(11px,3.2vw,15px); }
   .host-landing-backdrop { inset: -12%; opacity: .68; filter: blur(32px) saturate(1.22); }
   .host-landing-art { display: none; }
   .host-landing-mobile {

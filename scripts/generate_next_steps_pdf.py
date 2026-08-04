@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate CrowdCut's one-page product opportunity and roadmap PDF."""
+"""Generate ManyVue's one-page product opportunity and roadmap PDF."""
 
 from pathlib import Path
 
@@ -10,7 +10,7 @@ from reportlab.pdfgen import canvas
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "output" / "pdf" / "CrowdCut_Next_Steps.pdf"
+OUTPUT = ROOT / "output" / "pdf" / "ManyVue_Next_Steps.pdf"
 
 INK = HexColor("#050509")
 PANEL = HexColor("#10121A")
@@ -119,9 +119,9 @@ def draw_pdf():
     c = canvas.Canvas(str(OUTPUT), pagesize=landscape(letter))
     width, height = landscape(letter)
 
-    c.setTitle("CrowdCut Live - Product Opportunity and Next Steps")
-    c.setAuthor("CrowdCut")
-    c.setSubject("How CrowdCut changes the live fan experience and grows into festival infrastructure")
+    c.setTitle("ManyVue Live - Product Opportunity and Next Steps")
+    c.setAuthor("ManyVue")
+    c.setSubject("How ManyVue changes the live fan experience and grows into festival infrastructure")
 
     c.setFillColor(INK)
     c.rect(0, 0, width, height, fill=1, stroke=0)
@@ -132,7 +132,7 @@ def draw_pdf():
     c.circle(42, 576, 10, fill=0, stroke=1)
     c.setStrokeColor(PINK)
     c.arc(31, 565, 53, 587, 300, 82)
-    label(c, "CROWDCUT", 61, 570, size=17, color=WHITE)
+    label(c, "MANYVUE", 61, 570, size=17, color=WHITE)
     c.setFillColor(PINK)
     c.roundRect(160, 568, 26, 12, 3, fill=1, stroke=0)
     label(c, "LIVE", 173, 571, size=6.2, color=WHITE, align="center")
@@ -145,7 +145,7 @@ def draw_pdf():
     label(c, "ONE CROWD. EVERY ANGLE. ONE PERSONAL FILM.", 49, 522, size=20.5, color=WHITE)
     paragraph(
         c,
-        "CrowdCut turns the phones already recording into a live camera network, then gives every fan a synchronized memory no single phone could capture.",
+        "ManyVue turns the phones already recording into a live camera network, then gives every fan a synchronized memory no single phone could capture.",
         49,
         501,
         620,
@@ -174,7 +174,7 @@ def draw_pdf():
     )
 
     # What becomes possible.
-    section_title(c, "APPLICATIONS", "WHAT CROWDCUT UNLOCKS", 398, 466, PINK)
+    section_title(c, "APPLICATIONS", "WHAT MANYVUE UNLOCKS", 398, 466, PINK)
     card_w, card_h, gap = 176, 62, 8
     possibility_card(c, 398, 379, card_w, card_h, "01", CYAN, "LIVE STAGE WINDOWS",
                      "Choose where to go by viewing real crowd video from each stage in the festival app.")
@@ -188,14 +188,14 @@ def draw_pdf():
     # Convex control plane.
     box(c, 30, 194, 732, 91, fill=PANEL, stroke=ACID, radius=12, line_width=1.25)
     label(c, "CONVEX IS THE PRODUCTION CONTROL ROOM", 45, 266, size=8.8, color=ACID)
-    label(c, "LiveKit carries the video. Convex makes every device agree on what the production is doing.",
-          747, 266, size=7.2, color=MUTED, align="right", font="Helvetica")
+    label(c, "Guarded transactions plus reactive queries make every client converge on authoritative production state.",
+          747, 266, size=7.0, color=MUTED, align="right", font="Helvetica")
     node_y, node_w, node_gap = 210, 158, 18
     nodes = [
-        ("01", CYAN, "LIVE PRESENCE", "Who joined, who is recording, and which angles are usable."),
-        ("02", PINK, "SCENE REVISIONS", "Which 1-5 cameras are live and what every screen should show."),
-        ("03", ACID, "BURST CUE", "Who captures the same instant and the exact T-3 to T+3 window."),
-        ("04", VIOLET, "READY + OWNED", "Which synchronized views each fan can replay and keep."),
+        ("01", CYAN, "LEASED PRESENCE", "Hashed capabilities, sequenced heartbeats, and stale-expiry cron."),
+        ("02", PINK, "REVISIONED SCENES", "Validated membership, normalized cutAt, atomic scene revision."),
+        ("03", ACID, "PRIVATE CAPTURE ANCHOR", "Expected-camera snapshot plus immutable T-3/T+3 signal."),
+        ("04", VIOLET, "IDEMPOTENT READINESS", "Provenance, preserved/uploaded state, owner-scoped replay."),
     ]
     for index, node in enumerate(nodes):
         nx = 45 + index * (node_w + node_gap)

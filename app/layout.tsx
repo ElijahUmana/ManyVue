@@ -8,7 +8,7 @@ const mono = Geist_Mono({ variable: "--font-mono", subsets: ["latin"] });
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "crowdcut-live.ild.chatgpt.site";
+  const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "manyvue-live.ild.chatgpt.site";
   const protocol = requestHeaders.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
   const description = "The crowd is the camera. Join a live multi-angle concert film and take home your moment.";
@@ -16,22 +16,20 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase: new URL(origin),
     title: {
-      default: "CrowdCut Live",
-      template: "%s · CrowdCut Live",
+      default: "ManyVue Live",
+      template: "%s · ManyVue Live",
     },
     description,
     openGraph: {
       type: "website",
       url: origin,
-      title: "CrowdCut Live — The Crowd Is the Camera",
+      title: "ManyVue Live — The Crowd Is the Camera",
       description,
-      images: [{ url: `${origin}/og.png`, width: 1536, height: 1024, alt: "CrowdCut Live crowd-built concert camera" }],
     },
     twitter: {
-      card: "summary_large_image",
-      title: "CrowdCut Live — The Crowd Is the Camera",
+      card: "summary",
+      title: "ManyVue Live — The Crowd Is the Camera",
       description,
-      images: [`${origin}/og.png`],
     },
   };
 }

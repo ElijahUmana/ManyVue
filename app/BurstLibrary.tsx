@@ -194,7 +194,7 @@ export function BurstLibrary({
   const missingAngleCount = Math.max(0, selectedExpectedCount - sources.length);
 
   return (
-    <section className="burst-library" role="dialog" aria-modal="true" aria-label="Saved CrowdCut Bursts">
+    <section className="burst-library" role="dialog" aria-modal="true" aria-label="Saved ManyVue Bursts">
       <header className="burst-library-topbar">
         <div>
           <p className="eyebrow">SAVED SYNCHRONIZED MOMENTS</p>

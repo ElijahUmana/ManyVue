@@ -230,7 +230,7 @@ export class DurableMediaRecorder {
     } catch (metadataError) {
       // The original persistence failure is the actionable error. This branch
       // intentionally avoids replacing it with a secondary metadata failure.
-      console.error("CrowdCut could not persist recorder failure metadata.", metadataError);
+      console.error("ManyVue could not persist recorder failure metadata.", metadataError);
     }
   }
 

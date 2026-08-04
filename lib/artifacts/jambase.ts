@@ -193,7 +193,7 @@ export async function fetchFestivalNow(query: FestivalNowQuery, env: JamBaseEnv)
       headers: {
         Authorization: `Bearer ${apiKey}`,
         Accept: "application/json",
-        "User-Agent": "CrowdCutLive/1.0",
+        "User-Agent": "ManyVueLive/1.0",
       },
     });
     if (!response.ok) {

@@ -17,7 +17,7 @@ export async function requireSessionBySlug(ctx: ReadCtx, slug: string) {
     .withIndex("by_slug", (q) => q.eq("slug", slug.trim().toLowerCase()))
     .unique();
   if (!session) {
-    throw new ConvexError({ code: "SESSION_NOT_FOUND", message: "CrowdCut session was not found." });
+    throw new ConvexError({ code: "SESSION_NOT_FOUND", message: "ManyVue session was not found." });
   }
   return session;
 }

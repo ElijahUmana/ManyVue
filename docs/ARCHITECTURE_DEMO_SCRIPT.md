@@ -1,28 +1,33 @@
-# CrowdCut: Convex architecture and opportunity scripts
+# ManyVue: Convex architecture and opportunity scripts
 
-## Convex architecture view - exact 20-second script
+## Convex architecture view - technical 30-second script
 
-> "LiveKit moves the video, but Convex runs the production. It is the realtime source of truth for who is recording, which one-to-five angles are live, and which phones own each T-minus-three to T-plus-three Burst. Every state change reaches every device instantly, turning separate phones into one synchronized camera crew."
+> "Convex is ManyVue's distributed coordination layer. Every device joins through a capability-guarded identity, heartbeats a sequenced presence lease, and subscribes to an authoritative revisioned scene. A director mutation validates active camera membership, normalizes the server-timed cut, atomically commits the next revision, and reactively fans it to every screen without polling. A Burst uses a separate protected query: Convex snapshots eligible recorders, persists an immutable T-minus-three to T-plus-three anchor, deduplicates markers and assets, and tracks preserved, uploaded, and owner-scoped readiness."
 
-### What to point at
+## Deeper technical continuation
 
-1. Point to the phone and LiveKit side while saying, "LiveKit moves the video."
-2. Move immediately to the yellow Convex control plane for "Convex runs the production."
-3. Trace presence to scenes to Burst readiness while naming those states.
-4. Sweep across all outbound arrows on "every device instantly."
+> "The data model is an auditable state machine across sessions, participants, scenes, Bursts, contributions, assets, and render jobs. Client sequence numbers reject out-of-order heartbeats; idempotency keys make scene, asset, and render retries safe; indexed queries keep the hot paths bounded; and a scheduled expiry mutation removes stale camera leases without letting old offline rows starve active presence. Reconnecting clients simply resubscribe and converge on the current authoritative revision."
 
-## Strong closing line if you have five more seconds
+## What to point at while speaking
 
-> "Remove Convex and these are unrelated livestreams. With Convex, the crowd behaves like one camera crew."
+1. Point to `participants` and say: "capability-guarded identity and sequenced presence lease."
+2. Move to `scenes` and trace `scheduleScene -> revision -> cutAtServerMs -> programState`.
+3. Move to the protected Burst channel and trace `expected cameras -> immutable capture anchor -> contributions`.
+4. Finish on `assets` and `renderJobs` while saying: "idempotent provenance, readiness, and ownership."
+5. Sweep across the subscription arrows on: "every client converges without polling."
+
+## Strong closing line
+
+> "Convex is not storage behind the demo; it is the transactional state machine that makes independently connected phones behave like one fault-tolerant production system."
 
 ## Transition to the product opportunity PDF
 
-> "And this realtime control plane is bigger than one demo. It becomes festival infrastructure: fans get personal multi-angle memories, artists get authentic crowd media, festivals can see what every stage actually looks like, and livestream viewers can step into perspectives fixed cameras cannot provide."
+> "That coordination layer is reusable festival infrastructure. The same presence, scene, capture, and ownership primitives can power personal multi-angle memories, artist-controlled crowd media, real visual windows into every stage, and remote viewing from perspectives fixed cameras cannot provide."
 
 ## While showing the roadmap section
 
-> "The system already proves the experience. The next step is a real stage pilot with adaptive quality, offline recovery, and rights controls; from there, the same Convex core expands into official stage windows, artist-triggered moments, crowd-powered broadcasts, and automated personal films."
+> "The working system already proves the state model end to end. A festival pilot hardens the same primitives with adaptive quality, offline recovery, rights enforcement, and higher concurrency; the platform layer then adds official stage discovery, artist-triggered capture, crowd-powered broadcasts, and automatically rendered personal films without redesigning the realtime core."
 
 ## One-line judge takeaway
 
-> "Convex does not sit behind CrowdCut - Convex is what makes the crowd act like one live production."
+> "Convex is the authoritative, reactive state machine that turns a crowd of unreliable mobile clients into one coherent production."

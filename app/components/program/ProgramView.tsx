@@ -230,7 +230,7 @@ export function ProgramView({
   clock: suppliedClock,
   qrSlot,
   eyebrow = "LIVE CROWD PRODUCTION",
-  title = "CrowdCut Live",
+  title = "ManyVue Live",
   onSceneApplied,
   onForegroundCameraChange,
   onBurstComplete,
@@ -313,7 +313,7 @@ export function ProgramView({
   }
 
   return (
-    <section className={styles.program} aria-label="CrowdCut live program">
+    <section className={styles.program} aria-label="ManyVue live program">
       <div className={styles.scene}>{scene}</div>
       {activeBurst && (
         <CrowdBurstReveal
@@ -336,7 +336,7 @@ export function ProgramView({
       </header>
 
       {qrSlot && (
-        <aside className={styles.qrSlot} aria-label="Join CrowdCut">
+        <aside className={styles.qrSlot} aria-label="Join ManyVue">
           <div>{qrSlot}</div>
           <span>SCAN · JOIN THE FILM</span>
         </aside>

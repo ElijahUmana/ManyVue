@@ -1,23 +1,16 @@
 export default function HostLanding() {
   return (
     <main className="host-landing">
-      <div className="host-landing-backdrop" aria-hidden="true" />
-      <img
-        className="host-landing-art"
-        src="/og.png"
-        alt="CrowdCut Live: The crowd is the camera"
-        fetchPriority="high"
-      />
-      <section className="host-landing-mobile" aria-label="CrowdCut Live: The crowd is the camera">
-        <div className="host-landing-mobile-photo" aria-hidden="true" />
-        <div className="host-landing-mobile-copy">
-          <p>CROWDCUT LIVE</p>
+      <section className="manyvue-hero" aria-label="ManyVue Live: every phone becomes an angle">
+        <div className="manyvue-hero-photo" aria-hidden="true" />
+        <div className="manyvue-hero-copy">
+          <p>MANYVUE LIVE</p>
           <h1>
-            THE CROWD<br />
-            IS THE<br />
-            <em>CAMERA.</em>
+            MANY VIEWS.<br />
+            ONE LIVE<br />
+            <em>FILM.</em>
           </h1>
-          <span>Every phone becomes an angle. Every angle becomes the film.</span>
+          <span>Every phone becomes an angle. The crowd becomes the camera crew.</span>
         </div>
       </section>
       <div className="host-landing-shade" aria-hidden="true" />

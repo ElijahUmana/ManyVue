@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   const participant = safePart(form.get("participant"), "participant");
   const kind = safePart(form.get("kind"), "clip");
   if (!ALLOWED_UPLOAD_KINDS.has(kind)) {
-    return Response.json({ ok: false, error: "Unsupported CrowdCut media kind." }, { status: 400 });
+    return Response.json({ ok: false, error: "Unsupported ManyVue media kind." }, { status: 400 });
   }
   const clientAssetId = form.has("clientAssetId")
     ? safePart(form.get("clientAssetId"), "asset")

@@ -173,7 +173,7 @@ export class RollingBurstRecorder {
       configurationError("A live video track is required.");
     }
     if (this.preRollMs !== BURST_PRE_ROLL_MS || this.postRollMs !== BURST_POST_ROLL_MS) {
-      configurationError("CrowdCut Burst capture must preserve exactly three seconds before and after the anchor.");
+      configurationError("ManyVue Burst capture must preserve exactly three seconds before and after the anchor.");
     }
     if (this.segmentIntervalMs <= 0 || this.segmentDurationMs < this.preRollMs + this.postRollMs + this.segmentIntervalMs) {
       configurationError("Rolling segments must overlap enough to cover every six-second Burst window.");

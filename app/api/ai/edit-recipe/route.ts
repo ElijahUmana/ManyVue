@@ -1,4 +1,4 @@
-import { planCrowdCutEdit } from "@/lib/ai/openai-edit-planner";
+import { planManyVueEdit } from "@/lib/ai/openai-edit-planner";
 import { validateEditRecipeInput } from "@/lib/ai/edit-recipe";
 
 export const dynamic = "force-dynamic";
@@ -25,8 +25,8 @@ export async function POST(request: Request) {
   return Response.json(result, { status: result.state === "generated" ? 201 : 200 });
 }
 
-function planCrowCutEditCompat(input: Parameters<typeof planCrowdCutEdit>[0]) {
-  return planCrowdCutEdit(input, {
+function planCrowCutEditCompat(input: Parameters<typeof planManyVueEdit>[0]) {
+  return planManyVueEdit(input, {
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     OPENAI_MODEL: process.env.OPENAI_MODEL,
   });
