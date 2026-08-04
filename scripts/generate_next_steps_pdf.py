@@ -1,37 +1,32 @@
 #!/usr/bin/env python3
-"""Generate CrowdCut's one-page festival roadmap PDF."""
+"""Generate CrowdCut's one-page product opportunity and roadmap PDF."""
 
 from pathlib import Path
-from textwrap import wrap
 
 from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import landscape, letter
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output" / "pdf" / "CrowdCut_Next_Steps.pdf"
 
-INK = HexColor("#07080D")
-PANEL = HexColor("#11131C")
-PANEL_2 = HexColor("#171A25")
-WHITE = HexColor("#F8FAFC")
-MUTED = HexColor("#A6ADBB")
-ACID = HexColor("#F1FF38")
-PINK = HexColor("#FF3D84")
-CYAN = HexColor("#63E6FF")
-VIOLET = HexColor("#9A70FF")
-LINE = HexColor("#303443")
+INK = HexColor("#050509")
+PANEL = HexColor("#10121A")
+PANEL_2 = HexColor("#171A24")
+PANEL_3 = HexColor("#202331")
+WHITE = HexColor("#FAFBFF")
+MUTED = HexColor("#AEB4C2")
+DIM = HexColor("#737A8A")
+ACID = HexColor("#F4FF3F")
+PINK = HexColor("#FF367C")
+CYAN = HexColor("#68E7FF")
+VIOLET = HexColor("#A36BFF")
+LINE = HexColor("#323746")
 
 
-def rounded_box(c, x, y, w, h, fill, stroke=LINE, radius=12, width=1):
-    c.setLineWidth(width)
-    c.setStrokeColor(stroke)
-    c.setFillColor(fill)
-    c.roundRect(x, y, w, h, radius, stroke=1, fill=1)
-
-
-def text(c, value, x, y, size=10, color=WHITE, font="Helvetica", align="left"):
+def label(c, value, x, y, size=8, color=WHITE, font="Helvetica-Bold", align="left"):
     c.setFillColor(color)
     c.setFont(font, size)
     if align == "right":
@@ -42,28 +37,81 @@ def text(c, value, x, y, size=10, color=WHITE, font="Helvetica", align="left"):
         c.drawString(x, y, value)
 
 
-def wrapped(c, value, x, y, width_chars, size=9, leading=12, color=MUTED, font="Helvetica"):
-    lines = wrap(value, width=width_chars, break_long_words=False, break_on_hyphens=False)
+def wrap_lines(value, font, size, max_width):
+    words = value.split()
+    lines = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if current and stringWidth(candidate, font, size) > max_width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
+
+def paragraph(c, value, x, y, max_width, size=8.5, leading=11, color=MUTED,
+              font="Helvetica", max_lines=None):
+    lines = wrap_lines(value, font, size, max_width)
+    if max_lines:
+        lines = lines[:max_lines]
     for line in lines:
-        text(c, line, x, y, size=size, color=color, font=font)
+        label(c, line, x, y, size=size, color=color, font=font)
         y -= leading
     return y
 
 
-def bullet_list(c, items, x, y, width_chars=39):
-    for item in items:
-        text(c, "+", x, y + 1, size=10, color=ACID, font="Helvetica-Bold")
-        y = wrapped(c, item, x + 14, y, width_chars, size=8.4, leading=10.5, color=WHITE)
-        y -= 6
-    return y
+def box(c, x, y, w, h, fill=PANEL, stroke=LINE, radius=12, line_width=1):
+    c.setFillColor(fill)
+    c.setStrokeColor(stroke)
+    c.setLineWidth(line_width)
+    c.roundRect(x, y, w, h, radius, fill=1, stroke=1)
 
 
-def metric(c, x, y, accent, value, label):
-    c.setStrokeColor(accent)
-    c.setLineWidth(3)
-    c.line(x, y + 3, x, y + 34)
-    text(c, value, x + 10, y + 20, size=14, color=WHITE, font="Helvetica-Bold")
-    text(c, label, x + 10, y + 6, size=6.7, color=MUTED, font="Helvetica-Bold")
+def section_title(c, kicker, title, x, y, accent=ACID):
+    label(c, kicker, x, y, size=6.4, color=accent, font="Helvetica-Bold")
+    label(c, title, x, y - 15, size=12, color=WHITE, font="Helvetica-Bold")
+
+
+def audience_row(c, x, y, w, tag, accent, title, body):
+    box(c, x, y, w, 39, fill=PANEL_2, stroke=LINE, radius=8)
+    c.setFillColor(accent)
+    c.roundRect(x + 9, y + 10, 47, 19, 9, fill=1, stroke=0)
+    label(c, tag, x + 32.5, y + 16.1, size=6.2, color=INK, align="center")
+    label(c, title, x + 65, y + 23, size=8.4, color=WHITE)
+    paragraph(c, body, x + 65, y + 10, w - 77, size=6.9, leading=8.2, color=MUTED, max_lines=2)
+
+
+def possibility_card(c, x, y, w, h, number, accent, title, body):
+    box(c, x, y, w, h, fill=PANEL_2, stroke=LINE, radius=9)
+    c.setFillColor(accent)
+    c.circle(x + 17, y + h - 17, 9, fill=1, stroke=0)
+    label(c, number, x + 17, y + h - 19.4, size=6.4, color=INK, align="center")
+    label(c, title, x + 31, y + h - 19.5, size=8.2, color=WHITE)
+    paragraph(c, body, x + 11, y + h - 37, w - 22, size=7.1, leading=9, color=MUTED, max_lines=3)
+
+
+def state_node(c, x, y, w, number, accent, title, body):
+    box(c, x, y, w, 43, fill=PANEL_3, stroke=accent, radius=8, line_width=1.1)
+    label(c, number, x + 10, y + 27, size=6.5, color=accent)
+    label(c, title, x + 27, y + 27, size=7.5, color=WHITE)
+    paragraph(c, body, x + 10, y + 13, w - 20, size=6.3, leading=7.2, color=MUTED, max_lines=2)
+
+
+def roadmap_column(c, x, y, w, accent, phase, headline, bullets):
+    c.setFillColor(accent)
+    c.roundRect(x, y + 69, w, 21, 7, fill=1, stroke=0)
+    label(c, phase, x + 10, y + 76, size=6.8, color=INK)
+    label(c, headline, x, y + 52, size=8.5, color=WHITE)
+    by = y + 38
+    for bullet in bullets:
+        c.setFillColor(accent)
+        c.circle(x + 3, by + 2, 1.5, fill=1, stroke=0)
+        paragraph(c, bullet, x + 10, by, w - 10, size=6.4, leading=7.5, color=MUTED, max_lines=2)
+        by -= 17
 
 
 def draw_pdf():
@@ -71,128 +119,119 @@ def draw_pdf():
     c = canvas.Canvas(str(OUTPUT), pagesize=landscape(letter))
     width, height = landscape(letter)
 
-    c.setTitle("CrowdCut Live - Festival Roadmap")
+    c.setTitle("CrowdCut Live - Product Opportunity and Next Steps")
     c.setAuthor("CrowdCut")
-    c.setSubject("Next steps from live hackathon demo to festival-scale product")
+    c.setSubject("How CrowdCut changes the live fan experience and grows into festival infrastructure")
 
     c.setFillColor(INK)
-    c.rect(0, 0, width, height, stroke=0, fill=1)
+    c.rect(0, 0, width, height, fill=1, stroke=0)
 
-    # Brand ring.
-    c.setLineWidth(4)
+    # Top brand bar.
+    c.setLineWidth(3.2)
     c.setStrokeColor(ACID)
-    c.circle(43, 573, 11, stroke=1, fill=0)
+    c.circle(42, 576, 10, fill=0, stroke=1)
     c.setStrokeColor(PINK)
-    c.arc(32, 562, 54, 584, 300, 82)
-
-    text(c, "CROWDCUT", 64, 568, size=18, color=WHITE, font="Helvetica-Bold")
-    text(c, "LIVE", 168, 572, size=7, color=INK, font="Helvetica-Bold")
+    c.arc(31, 565, 53, 587, 300, 82)
+    label(c, "CROWDCUT", 61, 570, size=17, color=WHITE)
     c.setFillColor(PINK)
-    c.roundRect(164, 567, 27, 12, 3, stroke=0, fill=1)
-    text(c, "LIVE", 177.5, 570.2, size=6.5, color=WHITE, font="Helvetica-Bold", align="center")
+    c.roundRect(160, 568, 26, 12, 3, fill=1, stroke=0)
+    label(c, "LIVE", 173, 571, size=6.2, color=WHITE, align="center")
+    label(c, "PRODUCT OPPORTUNITY + FESTIVAL ROADMAP", 762, 573, size=7.3, color=ACID, align="right")
 
-    text(c, "FROM HACKATHON DEMO TO FESTIVAL INFRASTRUCTURE", 762, 574,
-         size=8.3, color=ACID, font="Helvetica-Bold", align="right")
-
-    # Hero promise.
-    rounded_box(c, 30, 474, 732, 72, PANEL, stroke=LINE, radius=14)
-    text(c, "THE CROWD BECOMES THE CAMERA NETWORK.", 49, 513, size=22, color=WHITE, font="Helvetica-Bold")
-    text(c, "Turn the phones already in the audience into a live production - then give every fan a personal film.",
-         49, 489, size=10.5, color=MUTED)
-    c.setFillColor(ACID)
-    c.roundRect(650, 493, 86, 30, 15, stroke=0, fill=1)
-    text(c, "ROADMAP", 693, 503, size=8.3, color=INK, font="Helvetica-Bold", align="center")
-
-    # Three strategic columns.
-    columns = [
-        (
-            "01", "FESTIVAL-READY SCALE", CYAN,
-            [
-                "Stage-scoped rooms and official-app deep links.",
-                "Adaptive uplink plus offline Burst queues for congested festival networks.",
-                "25-100+ device load validation and automatic video quality tiers.",
-                "Venue moderation, artist rights, consent, and content lifecycle controls.",
-            ],
-        ),
-        (
-            "02", "FAN + ARTIST PRODUCT", PINK,
-            [
-                "Artist-triggered hero moments and official synchronized Burst cues.",
-                "Personal 'where I stood' edits and collectible set memories.",
-                "Live Cuts across stages: see what it actually looks like right now.",
-                "Artist-approved fan footage pools for recap and social teams.",
-            ],
-        ),
-        (
-            "03", "INTEGRATIONS + GTM", VIOLET,
-            [
-                "Outside Lands app placement with ticket-linked identity and permissions.",
-                "JamBase schedule, set, stage, and artist context.",
-                "Official livestream integration: crowd perspectives beside the broadcast.",
-                "Sponsor moments that reward real contribution instead of screen time.",
-            ],
-        ),
-    ]
-
-    col_y, col_h, gap = 258, 198, 12
-    col_w = (732 - (2 * gap)) / 3
-    for index, (number, title_value, accent, items) in enumerate(columns):
-        x = 30 + index * (col_w + gap)
-        rounded_box(c, x, col_y, col_w, col_h, PANEL_2, stroke=LINE, radius=12)
-        c.setFillColor(accent)
-        c.roundRect(x + 14, col_y + col_h - 39, 29, 24, 6, stroke=0, fill=1)
-        text(c, number, x + 28.5, col_y + col_h - 31, size=8.5, color=INK,
-             font="Helvetica-Bold", align="center")
-        text(c, title_value, x + 53, col_y + col_h - 31, size=9.1, color=WHITE,
-             font="Helvetica-Bold")
-        c.setStrokeColor(accent)
-        c.setLineWidth(1.4)
-        c.line(x + 14, col_y + col_h - 50, x + col_w - 14, col_y + col_h - 50)
-        bullet_list(c, items, x + 16, col_y + col_h - 70, width_chars=37)
-
-    # Compounding flywheel.
-    rounded_box(c, 30, 188, 732, 53, PANEL, stroke=LINE, radius=12)
-    text(c, "COMPOUNDING FLYWHEEL", 48, 218, size=7.3, color=ACID, font="Helvetica-Bold")
-    stages = ["MORE LIVE ANGLES", "BETTER SHARED FILM", "BETTER PERSONAL CUTS", "MORE SHARING", "MORE CONTRIBUTORS"]
-    stage_x = [48, 185, 328, 480, 602]
-    for i, label in enumerate(stages):
-        text(c, label, stage_x[i], 201, size=7.8, color=WHITE, font="Helvetica-Bold")
-        if i < len(stages) - 1:
-            c.setStrokeColor([CYAN, PINK, VIOLET, ACID][i])
-            c.setLineWidth(1.6)
-            c.line(stage_x[i] + 105, 204, stage_x[i + 1] - 10, 204)
-            c.line(stage_x[i + 1] - 15, 208, stage_x[i + 1] - 10, 204)
-            c.line(stage_x[i + 1] - 15, 200, stage_x[i + 1] - 10, 204)
-
-    # Convex core + validation targets.
-    rounded_box(c, 30, 64, 454, 106, PANEL, stroke=ACID, radius=12, width=1.4)
-    text(c, "WHY CONVEX REMAINS THE CORE", 48, 144, size=9, color=ACID, font="Helvetica-Bold")
-    wrapped(
+    # Hero.
+    box(c, 30, 487, 732, 63, fill=PANEL, stroke=LINE, radius=14)
+    c.setFillColor(PINK)
+    c.rect(30, 487, 5, 63, fill=1, stroke=0)
+    label(c, "ONE CROWD. EVERY ANGLE. ONE PERSONAL FILM.", 49, 522, size=20.5, color=WHITE)
+    paragraph(
         c,
-        "Convex remains the source of truth for presence, scene revisions, synchronized capture membership, readiness, lifecycle, idempotency, and ownership - while the media and rendering providers can evolve independently.",
-        48,
-        123,
-        78,
-        size=9.1,
-        leading=13,
-        color=WHITE,
+        "CrowdCut turns the phones already recording into a live camera network, then gives every fan a synchronized memory no single phone could capture.",
+        49,
+        501,
+        620,
+        size=9.2,
+        leading=11,
+        color=MUTED,
+        max_lines=2,
     )
-    text(c, "REMOVE CONVEX AND THE CROWD STOPS BEHAVING LIKE ONE PRODUCTION.",
-         48, 80, size=7.3, color=MUTED, font="Helvetica-Bold")
+    c.setFillColor(ACID)
+    c.roundRect(665, 502, 74, 25, 12, fill=1, stroke=0)
+    label(c, "WHY NOW", 702, 510, size=7, color=INK, align="center")
 
-    rounded_box(c, 496, 64, 266, 106, PANEL, stroke=LINE, radius=12)
-    text(c, "NEXT PROOF TARGETS", 514, 144, size=9, color=ACID, font="Helvetica-Bold")
-    metric(c, 516, 101, CYAN, "<250 ms", "CONTROL-STATE PROPAGATION")
-    metric(c, 637, 101, PINK, "<500 ms", "CAMERA SWITCH")
-    metric(c, 516, 68, VIOLET, "T-3 / T+3", "EXACT BURST WINDOW")
-    metric(c, 637, 68, ACID, ">95%", "ARTIFACT COMPLETION")
+    # Why this is useful.
+    section_title(c, "WHO GETS VALUE", "WHY THIS MATTERS", 30, 466, CYAN)
+    audience_row(
+        c, 30, 393, 352, "FANS", CYAN, "A BETTER MEMORY",
+        "Record once, see your angle go live, and keep a multi-angle artifact centered on where you stood.",
+    )
+    audience_row(
+        c, 30, 348, 352, "ARTISTS", PINK, "AUTHENTIC CROWD MEDIA",
+        "Turn fan perspectives into the live program, artist-approved recap footage, and shareable moments.",
+    )
+    audience_row(
+        c, 30, 303, 352, "FESTIVALS", ACID, "VISUAL TRUTH, RIGHT NOW",
+        "See the front, back, and different stages as they actually look - not only attendance numbers or a heatmap.",
+    )
+
+    # What becomes possible.
+    section_title(c, "APPLICATIONS", "WHAT CROWDCUT UNLOCKS", 398, 466, PINK)
+    card_w, card_h, gap = 176, 62, 8
+    possibility_card(c, 398, 379, card_w, card_h, "01", CYAN, "LIVE STAGE WINDOWS",
+                     "Choose where to go by viewing real crowd video from each stage in the festival app.")
+    possibility_card(c, 398 + card_w + gap, 379, card_w, card_h, "02", PINK, "CROWD-DIRECTED SHOW",
+                     "Blend front, side, wide, and reaction angles while the performance is happening.")
+    possibility_card(c, 398, 307, card_w, card_h, "03", ACID, "PERSONAL BURST",
+                     "Preserve T-3 to T+3 across available views, then replay or download the synchronized moment.")
+    possibility_card(c, 398 + card_w + gap, 307, card_w, card_h, "04", VIOLET, "REMOTE FAN PRESENCE",
+                     "Let livestream viewers step into authentic crowd perspectives fixed cameras cannot provide.")
+
+    # Convex control plane.
+    box(c, 30, 194, 732, 91, fill=PANEL, stroke=ACID, radius=12, line_width=1.25)
+    label(c, "CONVEX IS THE PRODUCTION CONTROL ROOM", 45, 266, size=8.8, color=ACID)
+    label(c, "LiveKit carries the video. Convex makes every device agree on what the production is doing.",
+          747, 266, size=7.2, color=MUTED, align="right", font="Helvetica")
+    node_y, node_w, node_gap = 210, 158, 18
+    nodes = [
+        ("01", CYAN, "LIVE PRESENCE", "Who joined, who is recording, and which angles are usable."),
+        ("02", PINK, "SCENE REVISIONS", "Which 1-5 cameras are live and what every screen should show."),
+        ("03", ACID, "BURST CUE", "Who captures the same instant and the exact T-3 to T+3 window."),
+        ("04", VIOLET, "READY + OWNED", "Which synchronized views each fan can replay and keep."),
+    ]
+    for index, node in enumerate(nodes):
+        nx = 45 + index * (node_w + node_gap)
+        state_node(c, nx, node_y, node_w, *node)
+        if index < 3:
+            ax = nx + node_w + 5
+            c.setStrokeColor(node[1])
+            c.setLineWidth(1.4)
+            c.line(ax, node_y + 21.5, ax + 8, node_y + 21.5)
+            c.line(ax + 4, node_y + 25, ax + 8, node_y + 21.5)
+            c.line(ax + 4, node_y + 18, ax + 8, node_y + 21.5)
+
+    # Roadmap.
+    box(c, 30, 66, 732, 111, fill=PANEL, stroke=LINE, radius=12)
+    label(c, "THE PATH FROM WORKING DEMO TO FESTIVAL PLATFORM", 45, 158, size=8.7, color=WHITE)
+    label(c, "Build on the same realtime core - expand reliability, rights, and distribution.",
+          747, 158, size=7, color=MUTED, align="right", font="Helvetica")
+    roadmap_column(c, 46, 59, 212, CYAN, "NOW - WORKING SYSTEM", "PROVE THE EXPERIENCE", [
+        "QR join, live camera wall, 1-5 angle direction, and personal Bursts.",
+        "Realtime join, cut, cue, readiness, ownership, and reconnect through Convex.",
+    ])
+    roadmap_column(c, 290, 59, 212, PINK, "NEXT - FESTIVAL PILOT", "PROVE IT IN THE FIELD", [
+        "Official stage rooms, app deep links, adaptive quality, offline queues, and rights controls.",
+        "Validate 25-100+ phones, under 250 ms control state, and over 95% artifact completion.",
+    ])
+    roadmap_column(c, 534, 59, 212, ACID, "THEN - FESTIVAL PLATFORM", "EXPAND THE MEDIUM", [
+        "Across-stage live windows, artist-triggered moments, official livestream crowd POVs.",
+        "Automated personal edits, schedule context, sponsor activations, and year-round artist use.",
+    ])
 
     # Footer.
-    text(c, "LIVE", 30, 28, size=6.5, color=ACID, font="Helvetica-Bold")
-    text(c, "crowdcut-live.ild.chatgpt.site", 58, 28, size=7.5, color=WHITE)
-    text(c, "github.com/ElijahUmana/CrowdCut", 762, 28, size=7.5, color=MUTED, align="right")
-    text(c, "ONE PERSON RECORDS A CLIP. A CROWD CREATES THE FILM.", 396, 10,
-         size=6.5, color=PINK, font="Helvetica-Bold", align="center")
+    label(c, "ONE PERSON RECORDS A CLIP. A CROWD CREATES THE FILM.", 30, 34, size=7.4, color=PINK)
+    label(c, "crowdcut-live.ild.chatgpt.site", 394, 34, size=7.1, color=WHITE, align="center", font="Helvetica")
+    label(c, "github.com/ElijahUmana/CrowdCut", 762, 34, size=7.1, color=MUTED, align="right", font="Helvetica")
+    label(c, "LIVE MULTI-ANGLE PRODUCTION  /  PERSONAL SYNCHRONIZED ARTIFACTS  /  CONVEX-NATIVE REALTIME STATE",
+          396, 15, size=6.1, color=DIM, align="center")
 
     c.showPage()
     c.save()
