@@ -13,6 +13,10 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
+  // Sites currently injects Node compatibility during publish. Pinning the
+  // preceding compatibility date keeps that injected flag valid across the
+  // platform's 2026-08-04 default transition.
+  compatibility_date: "2026-08-03",
   d1_databases: d1
     ? [
         {
