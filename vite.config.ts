@@ -50,7 +50,11 @@ export default defineConfig(async ({ command }) => {
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import("@cloudflare/vite-plugin");
   const runtimeBindingConfig = command === "serve"
-    ? { ...localBindingConfig, compatibility_flags: ["nodejs_compat"] }
+    ? {
+        ...localBindingConfig,
+        compatibility_date: "2026-05-22",
+        compatibility_flags: ["nodejs_compat"],
+      }
     : localBindingConfig;
 
   return {

@@ -1830,6 +1830,17 @@ export default function CrowdCutApp() {
         </button>
 
         <aside className={`persistent-join ${joinExpanded ? "expanded" : "compact"}`} aria-label="Join CrowdCut camera room">
+          {joinExpanded && (
+            <button
+              type="button"
+              className="join-collapse"
+              onClick={() => setJoinExpanded(false)}
+              aria-label="Hide the join QR code and return to the live cameras"
+            >
+              <span aria-hidden="true">↓</span>
+              HIDE QR · VIEW CAMERAS
+            </button>
+          )}
           <button className="join-qr" onClick={() => setJoinExpanded(true)} aria-label={joinExpanded ? "Camera join QR code" : "Enlarge camera join QR code"}>
             {qr
               ? <img src={qr} alt="Scan to join CrowdCut as a camera" />
@@ -1844,7 +1855,7 @@ export default function CrowdCutApp() {
               <button onClick={() => void copyJoinLink()}>{joinCopied ? "LINK COPIED" : "COPY JOIN LINK"}</button>
               <a href={joinUrl || undefined} target="_blank" rel="noreferrer" aria-disabled={!joinUrl}>TEST JOIN PAGE</a>
               <button onClick={createFreshRoom}>NEW ROOM</button>
-              <button onClick={() => setJoinExpanded(false)}>COLLAPSE</button>
+              <button onClick={() => setJoinExpanded(false)}>VIEW CAMERAS</button>
             </div>
           </div>
           {!joinExpanded && <button className="join-expand" onClick={() => setJoinExpanded(true)}>SCAN TO JOIN · ENLARGE</button>}
