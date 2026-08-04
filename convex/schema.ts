@@ -59,6 +59,8 @@ export default defineSchema({
   })
     .index("by_session", ["sessionId"])
     .index("by_session_livekit_identity", ["sessionId", "livekitIdentity"])
+    .index("by_session_connection_state_last_seen", ["sessionId", "connectionState", "lastSeenAt"])
+    .index("by_connection_state_last_seen", ["connectionState", "lastSeenAt"])
     .index("by_last_seen", ["lastSeenAt"]),
 
   scenes: defineTable({

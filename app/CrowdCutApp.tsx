@@ -27,6 +27,12 @@ type BurstPhase = "idle" | "capturing" | "preview" | "preserved";
 type ArtifactPhase = "idle" | "saved" | "uploading" | "waiting" | "editing" | "rendering" | "ready" | "failed";
 type SessionStatus = "lobby" | "live" | "ended";
 type HostSession = { sessionId: string; slug: string; hostCapability: string };
+type StoredParticipant = {
+  participantId: string;
+  participantCapability: string;
+  livekitIdentity: string;
+  sessionId: string;
+};
 type BurstCaptureSignal = {
   _id: Id<"bursts">;
   anchorServerMs: number;
@@ -456,13 +462,39 @@ export default function CrowdCutApp() {
       setSessionId(host.slug);
       setConvexSessionId(host.sessionId);
       setHostCapability(host.hostCapability);
-      const joined = await client.action(api.participants.join, {
-        sessionSlug: host.slug,
-        displayName: "Host angle",
-        role: "presenter",
-        deviceInfo: { platform: navigator.platform, userAgent: navigator.userAgent },
-        shotMetadata: { stageZone: "center", framing: "medium", confidence: 1, source: "self_reported" },
-      });
+      let joined: StoredParticipant | null = null;
+      const storedParticipant = window.localStorage.getItem("crowdcut-program-participant");
+      if (storedParticipant) {
+        try {
+          const candidate = JSON.parse(storedParticipant) as Partial<StoredParticipant>;
+          if (
+            candidate.sessionId === host.sessionId &&
+            candidate.participantId &&
+            candidate.participantCapability &&
+            candidate.livekitIdentity
+          ) {
+            // Validate the stored capability against Convex before reusing it.
+            // A normal Program View reload therefore keeps one presenter row
+            // instead of creating another presence record every time.
+            await client.query(api.participants.me, {
+              participantId: candidate.participantId as Id<"participants">,
+              participantCapability: candidate.participantCapability,
+            });
+            joined = candidate as StoredParticipant;
+          }
+        } catch {
+          window.localStorage.removeItem("crowdcut-program-participant");
+        }
+      }
+      if (!joined) {
+        joined = await client.action(api.participants.join, {
+          sessionSlug: host.slug,
+          displayName: "Host angle",
+          role: "presenter",
+          deviceInfo: { platform: navigator.platform, userAgent: navigator.userAgent },
+          shotMetadata: { stageZone: "center", framing: "medium", confidence: 1, source: "self_reported" },
+        }) as StoredParticipant;
+      }
       if (cancelled) return;
       setParticipantId(String(joined.participantId));
       participantIdRef.current = String(joined.participantId);
@@ -1312,16 +1344,17 @@ export default function CrowdCutApp() {
   }).slice(0, 5), [feeds, selectedCameraIds]);
 
   const toggleCameraSelection = useCallback((feed: Feed) => {
-    if (selectedCameraIds.includes(feed.id)) {
-      setSelectedCameraIds(selectedCameraIds.filter((id) => id !== feed.id));
+    const connected = selectedCameraIds.filter((id) => feeds.some((candidate) => candidate.id === id));
+    if (connected.includes(feed.id)) {
+      setSelectedCameraIds(connected.filter((id) => id !== feed.id));
       return;
     }
-    if (selectedCameraIds.length >= 5) {
+    if (connected.length >= 5) {
       setTransportMessage("Five angles are already selected. Deselect one before adding another.");
       return;
     }
-    setSelectedCameraIds([...selectedCameraIds, feed.id]);
-  }, [selectedCameraIds]);
+    setSelectedCameraIds([...connected, feed.id]);
+  }, [feeds, selectedCameraIds]);
 
   const takeFeed = useCallback((feed: Feed) => {
     sweepTokenRef.current += 1;
@@ -1469,6 +1502,26 @@ export default function CrowdCutApp() {
       : directedFallback.slice(0, scene.layout === "duo" ? 2 : 1);
   }, [feeds, orderedFeeds, scene.activeIds, scene.layout]);
 
+  const multiviewActive = programComposition !== 1 && activeFeeds.length > 1;
+
+  const launchSelectedMultiview = useCallback(() => {
+    const count = Math.min(5, selectedFeeds.length);
+    if (count < 2) {
+      setTransportMessage("Select at least two live cameras, then launch Multiview.");
+      return;
+    }
+    takeSelectedLayout(count as 2 | 3 | 4 | 5);
+  }, [selectedFeeds.length, takeSelectedLayout]);
+
+  const exitMultiview = useCallback(() => {
+    const hero = activeFeeds[0] ?? selectedFeeds[0] ?? orderedFeeds[0];
+    if (!hero) {
+      setTransportMessage("A live camera is required before leaving Multiview.");
+      return;
+    }
+    takeFeed(hero);
+  }, [activeFeeds, orderedFeeds, selectedFeeds, takeFeed]);
+
   const cameraBrowseFeeds = useMemo(() => {
     const mine = cameraStream ? {
       id: participantId,
@@ -1517,13 +1570,19 @@ export default function CrowdCutApp() {
                     <b>{cameraFocusedFeed.angle} · {cameraFocusedFeed.label}</b>
                   </div>
                 </div>
-                <button className="camera-live-back" type="button" onClick={() => setCameraFocusedFeedId("")}>← ALL LIVE CUTS</button>
+                <div className="camera-live-focus-actions">
+                  <button className="camera-live-back" type="button" onClick={() => setCameraFocusedFeedId("")}>← ALL LIVE CUTS</button>
+                  <button className="camera-live-mine" type="button" onClick={() => { setCameraViewMode("mine"); setCameraFocusedFeedId(""); }}>RETURN TO MY ANGLE</button>
+                </div>
               </>
             ) : (
               <div className="camera-live-gallery-wrap">
                 <header>
                   <div><p className="eyebrow">LIVE CUTS</p><h2>Every connected angle.</h2></div>
-                  <span>{cameraBrowseFeeds.length} LIVE · TAP ANY VIEW</span>
+                  <div className="camera-live-gallery-actions">
+                    <span>{cameraBrowseFeeds.length} LIVE · TAP ANY VIEW</span>
+                    <button type="button" onClick={() => { setCameraViewMode("mine"); setCameraFocusedFeedId(""); }}>← MY ANGLE</button>
+                  </div>
                 </header>
                 <div className="camera-live-gallery">
                   {cameraBrowseFeeds.map((feed) => {
@@ -1560,9 +1619,9 @@ export default function CrowdCutApp() {
 
         {recording && (
           <div className="camera-view-toggle" role="group" aria-label="Choose camera monitor">
-            <button className={cameraViewMode === "mine" ? "selected" : ""} onClick={() => { setCameraViewMode("mine"); setCameraFocusedFeedId(""); }}>MY ANGLE</button>
+            <button className={cameraViewMode === "mine" ? "selected" : ""} onClick={() => { setCameraViewMode("mine"); setCameraFocusedFeedId(""); }}>MY ANGLE ↩</button>
             <button className={cameraViewMode === "live" ? "selected" : ""} onClick={() => { setCameraViewMode("live"); setCameraFocusedFeedId(""); }}>
-              LIVE CUTS <i aria-hidden="true" />
+              LIVE CUTS <b>{cameraBrowseFeeds.length}</b><i aria-hidden="true" />
             </button>
             <button className="view-bursts-toggle" onClick={() => setBurstLibraryOpen(true)}>
               BURSTS <b>{burstHistory.length}</b>
@@ -1750,14 +1809,14 @@ export default function CrowdCutApp() {
 
         <aside className="multiview-rail" aria-label="Live camera multiview">
           <header>
-            <div><span className={showLive ? "live-dot" : "ready-dot"} /> LIVE ANGLES · CLICK TO VIEW</div>
+            <div><span className={showLive ? "live-dot" : "ready-dot"} /> LIVE CAMERA WALL</div>
             <button className={`rail-mode ${directorAuto ? "auto" : "manual"}`} onClick={toggleDirectorAuto}>
               {directorAuto ? "AUTO ON" : "MANUAL"}
             </button>
           </header>
           <div className="angle-distribution">{STAGE_ANGLES.map((angle) => `${angle[0]}:${feeds.filter((feed) => feed.angle === angle).length}`).join("  ·  ")}</div>
           <div className="selection-summary">
-            <span><b>{selectedFeeds.length}</b>/5 IN MULTIVIEW · ORDER SET BY YOUR TAPS</span>
+            <span><b>{selectedFeeds.length}</b>/5 SELECTED · TAP + TO BUILD A MULTIVIEW</span>
             <button disabled={selectedFeeds.length === 0} onClick={() => setSelectedCameraIds([])}>CLEAR</button>
           </div>
           <div className="multiview-grid">
@@ -1777,7 +1836,7 @@ export default function CrowdCutApp() {
                     <span className="multiview-video"><FeedVideo feed={feed} /></span>
                     <span className="multiview-meta">
                       <b><span>{feed.angle}</span>{feed.label}</b>
-                      <em>{onAir ? "SHOWING" : "VIEW LIVE →"}</em>
+                      <em>{onAir ? "ON PROGRAM" : "SHOW FULL SCREEN →"}</em>
                     </span>
                   </button>
                   <button
@@ -1786,7 +1845,7 @@ export default function CrowdCutApp() {
                     aria-pressed={selectedIndex >= 0}
                     aria-label={`${selectedIndex >= 0 ? "Remove" : "Add"} ${feed.label} ${selectedIndex >= 0 ? "from" : "to"} the multiview`}
                   >
-                    {selectedIndex >= 0 ? `${selectedIndex + 1} · ADDED` : "+ MULTIVIEW"}
+                    {selectedIndex >= 0 ? `${selectedIndex + 1} · SELECTED` : "+ SELECT"}
                   </button>
                 </article>
               );
@@ -1798,6 +1857,16 @@ export default function CrowdCutApp() {
               </div>
             )}
           </div>
+          <div className={`multiview-launch ${multiviewActive ? "is-live" : ""}`}>
+            <span>{multiviewActive ? `${activeFeeds.length} ANGLES ARE LIVE TOGETHER` : "SELECT 2–5 CAMERAS, THEN LAUNCH"}</span>
+            <button
+              type="button"
+              onClick={multiviewActive ? exitMultiview : launchSelectedMultiview}
+              disabled={!multiviewActive && selectedFeeds.length < 2}
+            >
+              {multiviewActive ? "EXIT MULTIVIEW · RETURN TO ONE ANGLE" : `LAUNCH ${selectedFeeds.length || ""} MULTIVIEW`}
+            </button>
+          </div>
           <div className="layout-controls" aria-label="Program layouts">
             {([1, 2, 3, 4, 5] as const).map((count) => (
               <button
@@ -1806,7 +1875,7 @@ export default function CrowdCutApp() {
                 disabled={selectedFeeds.length < count}
                 onClick={() => takeSelectedLayout(count)}
               >
-                <b>{count}</b><span>{count === 1 ? "ANGLE" : "ANGLES"}</span>
+                <b>{count}</b><span>{count === 1 ? "FULL" : "VIEW"}</span>
               </button>
             ))}
             <button className={programComposition === "sweep" ? "active sweep-layout-control" : "sweep-layout-control"} disabled={selectedFeeds.length < 2} onClick={takeSweep}>SLOW SWEEP → HERO</button>

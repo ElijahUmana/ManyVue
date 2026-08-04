@@ -5,13 +5,19 @@ import type { MutationCtx } from "./_generated/server";
 import { assertHost, assertParticipant, publicParticipant, publicSession } from "./lib/capabilities";
 import {
   assertParticipantsBelongToSession,
+  connectedParticipantsBySessionSince,
   participantCanReceiveScheduledControl,
   participantIsLiveCamera,
+  recentParticipantsBySession,
   requireSessionBySlug,
 } from "./lib/runtime";
 import { sceneLayout, sceneSource } from "./validators";
 import { normalizeSceneCutAt, validateSceneRecipe } from "../lib/realtime/scenes";
 import { planAutomaticScene } from "../lib/realtime/autodirector";
+import {
+  CONTROL_RECOVERY_GRACE_MS,
+  PRESENCE_STALE_AFTER_MS,
+} from "../lib/realtime/constants";
 
 // Retain the legacy result type while returning no Burst payload at runtime so
 // existing clients can roll over to bursts.activeCaptureAnchor without a
@@ -126,17 +132,22 @@ export const scheduleAutoScene = mutation({
       .unique();
     if (existing) return existing;
     const now = Date.now();
-    const participants = await ctx.db
-      .query("participants")
-      .withIndex("by_session", (q) => q.eq("sessionId", session._id))
-      .collect();
-    const strictLive = participants.filter((participant) => participantIsLiveCamera(participant, now));
+    const connected = await connectedParticipantsBySessionSince(
+      ctx,
+      session._id,
+      now - PRESENCE_STALE_AFTER_MS,
+    );
+    const strictLive = connected.filter((participant) => participantIsLiveCamera(participant, now));
     // AUTO normally uses strict heartbeat state. If every visible recording
     // camera was just expired by timer throttling, make one bounded recovery
     // attempt instead of leaving the AUTO button apparently inert.
     const live = strictLive.length
       ? strictLive
-      : participants.filter((participant) => participantCanReceiveScheduledControl(participant, now));
+      : (await recentParticipantsBySession(
+          ctx,
+          session._id,
+          now - CONTROL_RECOVERY_GRACE_MS,
+        )).filter((participant) => participantCanReceiveScheduledControl(participant, now));
     const previous = session.currentSceneId ? await ctx.db.get(session.currentSceneId) : null;
     const plan = planAutomaticScene({
       cameras: live.map((camera) => ({
@@ -167,10 +178,11 @@ export const programState = query({
   handler: async (ctx, { sessionSlug }) => {
     const session = await requireSessionBySlug(ctx, sessionSlug);
     const now = Date.now();
-    const participants = await ctx.db
-      .query("participants")
-      .withIndex("by_session", (q) => q.eq("sessionId", session._id))
-      .collect();
+    const participants = await connectedParticipantsBySessionSince(
+      ctx,
+      session._id,
+      now - PRESENCE_STALE_AFTER_MS,
+    );
     const scene = session.currentSceneId ? await ctx.db.get(session.currentSceneId) : null;
     return {
       serverNowMs: now,

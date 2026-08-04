@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 export default function HostLanding() {
   return (
@@ -16,10 +17,10 @@ export default function HostLanding() {
 
       <div className="host-landing-entry">
         <p className="eyebrow">HOST EXPERIENCE</p>
-        <a href="/?view=program" className="host-enter">
+        <Link href="/?view=program" className="host-enter">
           <span>ENTER</span>
           <i aria-hidden="true">→</i>
-        </a>
+        </Link>
         <small>Open the live production room</small>
       </div>
     </main>

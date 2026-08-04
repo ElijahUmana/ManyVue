@@ -8,7 +8,12 @@ import {
   publicParticipant,
   assertHost,
 } from "./lib/capabilities";
-import { participantIsLiveCamera, requireSessionBySlug } from "./lib/runtime";
+import {
+  connectedParticipantsBySessionSince,
+  participantIsLiveCamera,
+  requireSessionBySlug,
+} from "./lib/runtime";
+import { expireStalePresence } from "./lib/presence_expiry";
 import { connectionState, deviceInfo, mediaHealth, participantRole, shotMetadataInput } from "./validators";
 import { PRESENCE_STALE_AFTER_MS } from "../lib/realtime/constants";
 
@@ -246,10 +251,11 @@ export const activeBySession = query({
   handler: async (ctx, { sessionSlug }) => {
     const session = await requireSessionBySlug(ctx, sessionSlug);
     const now = Date.now();
-    const participants = await ctx.db
-      .query("participants")
-      .withIndex("by_session", (q) => q.eq("sessionId", session._id))
-      .collect();
+    const participants = await connectedParticipantsBySessionSince(
+      ctx,
+      session._id,
+      now - PRESENCE_STALE_AFTER_MS,
+    );
     return participants.filter((participant) => participantIsLiveCamera(participant, now)).map(publicParticipant);
   },
 });
@@ -257,20 +263,25 @@ export const activeBySession = query({
 export const expireStale = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const cutoff = Date.now() - PRESENCE_STALE_AFTER_MS;
-    const stale = await ctx.db
-      .query("participants")
-      .withIndex("by_last_seen", (q) => q.lt("lastSeenAt", cutoff))
-      .take(100);
-    let expired = 0;
-    for (const participant of stale) {
-      if (participant.connectionState === "offline" || participant.leftAt !== undefined) continue;
-      await ctx.db.patch(participant._id, {
-        connectionState: "offline",
-        disconnectedAt: Date.now(),
-      });
-      expired += 1;
-    }
-    return { expired };
+    const now = Date.now();
+    return await expireStalePresence({
+      cutoffMs: now - PRESENCE_STALE_AFTER_MS,
+      disconnectedAtMs: now,
+      store: {
+        findStaleByState: async (connectionState, cutoffMs, limit) =>
+          await ctx.db
+            .query("participants")
+            .withIndex("by_connection_state_last_seen", (q) =>
+              q.eq("connectionState", connectionState).lt("lastSeenAt", cutoffMs),
+            )
+            .take(limit),
+        markOffline: async (participant, disconnectedAtMs) => {
+          await ctx.db.patch(participant._id, {
+            connectionState: "offline",
+            disconnectedAt: disconnectedAtMs,
+          });
+        },
+      },
+    });
   },
 });

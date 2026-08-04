@@ -13,6 +13,7 @@ import type * as bursts from "../bursts.js";
 import type * as crons from "../crons.js";
 import type * as director from "../director.js";
 import type * as lib_capabilities from "../lib/capabilities.js";
+import type * as lib_presence_expiry from "../lib/presence_expiry.js";
 import type * as lib_runtime from "../lib/runtime.js";
 import type * as participants from "../participants.js";
 import type * as renderJobs from "../renderJobs.js";
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   director: typeof director;
   "lib/capabilities": typeof lib_capabilities;
+  "lib/presence_expiry": typeof lib_presence_expiry;
   "lib/runtime": typeof lib_runtime;
   participants: typeof participants;
   renderJobs: typeof renderJobs;

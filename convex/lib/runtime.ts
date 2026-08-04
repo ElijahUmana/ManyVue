@@ -1,5 +1,5 @@
 import { ConvexError } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
   isRecoverableControlCamera,
@@ -8,6 +8,8 @@ import {
 } from "../../lib/realtime/presence";
 
 type ReadCtx = Pick<QueryCtx, "db"> | Pick<MutationCtx, "db">;
+
+const CONNECTED_STATES = ["online", "degraded"] as const;
 
 export async function requireSessionBySlug(ctx: ReadCtx, slug: string) {
   const session = await ctx.db
@@ -32,6 +34,51 @@ export function participantCanReceiveScheduledControl(
   nowMs: number,
 ): boolean {
   return isRecoverableControlCamera(participant, nowMs);
+}
+
+/**
+ * Read only participants that can still be live, using the compound index so
+ * historical/offline rows never inflate reactive query I/O.
+ */
+export async function connectedParticipantsBySessionSince(
+  ctx: ReadCtx,
+  sessionId: Id<"sessions">,
+  cutoffMs: number,
+): Promise<Doc<"participants">[]> {
+  const participants: Doc<"participants">[] = [];
+  for (const connectionState of CONNECTED_STATES) {
+    const matching = await ctx.db
+      .query("participants")
+      .withIndex("by_session_connection_state_last_seen", (q) =>
+        q
+          .eq("sessionId", sessionId)
+          .eq("connectionState", connectionState)
+          .gte("lastSeenAt", cutoffMs),
+      )
+      .collect();
+    participants.push(...matching);
+  }
+  return participants;
+}
+
+/** A bounded recovery read used only when no strictly-live camera exists. */
+export async function recentParticipantsBySession(
+  ctx: ReadCtx,
+  sessionId: Id<"sessions">,
+  cutoffMs: number,
+): Promise<Doc<"participants">[]> {
+  const participants = await connectedParticipantsBySessionSince(ctx, sessionId, cutoffMs);
+  const offline = await ctx.db
+    .query("participants")
+    .withIndex("by_session_connection_state_last_seen", (q) =>
+      q
+        .eq("sessionId", sessionId)
+        .eq("connectionState", "offline")
+        .gte("lastSeenAt", cutoffMs),
+    )
+    .collect();
+  participants.push(...offline);
+  return participants;
 }
 
 export async function assertParticipantsBelongToSession(

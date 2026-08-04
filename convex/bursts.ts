@@ -3,19 +3,21 @@ import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { assertHost, assertParticipant } from "./lib/capabilities";
-import { participantIsLiveCamera } from "./lib/runtime";
+import { connectedParticipantsBySessionSince, participantIsLiveCamera } from "./lib/runtime";
 import {
   BURST_CONTRIBUTION_DEADLINE_MS,
   BURST_WINDOW_AFTER_MS,
   BURST_WINDOW_BEFORE_MS,
+  PRESENCE_STALE_AFTER_MS,
 } from "../lib/realtime/constants";
 import { shouldJoinBurstCluster } from "../lib/realtime/burst-clustering";
 
 async function activeRecordingParticipants(ctx: MutationCtx, sessionId: Id<"sessions">, now: number) {
-  const participants = await ctx.db
-    .query("participants")
-    .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
-    .collect();
+  const participants = await connectedParticipantsBySessionSince(
+    ctx,
+    sessionId,
+    now - PRESENCE_STALE_AFTER_MS,
+  );
   // Role does not determine whether a device is a camera. A presenter that
   // explicitly publishes and records a host angle must be captured alongside
   // every other live camera at the anchor.
