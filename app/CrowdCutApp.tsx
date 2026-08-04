@@ -250,6 +250,7 @@ export default function CrowdCutApp() {
   const [qr, setQr] = useState("");
   const [joinUrl, setJoinUrl] = useState("");
   const [joinExpanded, setJoinExpanded] = useState(false);
+  const [mobileWallOpen, setMobileWallOpen] = useState(false);
   const [joinCopied, setJoinCopied] = useState(false);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [scene, setScene] = useState<Scene>({ layout: "hero", activeIds: [], cutAt: 0, revision: 0 });
@@ -1358,6 +1359,7 @@ export default function CrowdCutApp() {
 
   const takeFeed = useCallback((feed: Feed) => {
     sweepTokenRef.current += 1;
+    setMobileWallOpen(false);
     setDirectorAuto(false);
     setDirectorDecision(`SHOWING LIVE · ${feed.angle} · ${feed.label}`);
     void (async () => {
@@ -1379,6 +1381,7 @@ export default function CrowdCutApp() {
       return;
     }
     sweepTokenRef.current += 1;
+    setMobileWallOpen(false);
     setDirectorAuto(false);
     setDirectorDecision(`MANUAL ${count}-ANGLE COMPOSITION · ${chosen.map((feed) => feed.angle).join(" + ")}`);
     void (async () => {
@@ -1400,6 +1403,7 @@ export default function CrowdCutApp() {
       return;
     }
     const sweepToken = ++sweepTokenRef.current;
+    setMobileWallOpen(false);
     setDirectorAuto(false);
     setDirectorDecision(`MANUAL SWEEP · ${sweep.map((feed) => feed.angle).join(" → ")}`);
     void (async () => {
@@ -1731,7 +1735,7 @@ export default function CrowdCutApp() {
 
   return (
     <main className="program-shell">
-      <section className={`program-stage ${programComposition === "sweep" ? "layout-sweep" : `layout-grid-${programComposition}`}`}>
+      <section className={`program-stage ${mobileWallOpen ? "mobile-wall-open" : ""} ${programComposition === "sweep" ? "layout-sweep" : `layout-grid-${programComposition}`}`}>
         {activeFeeds.length ? activeFeeds.map((feed, index) => (
           <article
             className={`program-feed feed-${index + 1} ${index === activeFeeds.length - 1 ? "feed-last" : ""}`}
@@ -1786,6 +1790,17 @@ export default function CrowdCutApp() {
           </div>
         </header>
 
+        <button
+          type="button"
+          className={`mobile-wall-toggle ${mobileWallOpen ? "is-open" : ""}`}
+          onClick={() => setMobileWallOpen((current) => !current)}
+          aria-expanded={mobileWallOpen}
+          aria-controls="crowdcut-camera-wall"
+        >
+          <span>{mobileWallOpen ? "BACK TO FILM" : "CAMERAS"}</span>
+          <b>{feeds.length}</b>
+        </button>
+
         <aside className={`persistent-join ${joinExpanded ? "expanded" : "compact"}`} aria-label="Join CrowdCut camera room">
           <button className="join-qr" onClick={() => setJoinExpanded(true)} aria-label={joinExpanded ? "Camera join QR code" : "Enlarge camera join QR code"}>
             {qr
@@ -1807,12 +1822,19 @@ export default function CrowdCutApp() {
           {!joinExpanded && <button className="join-expand" onClick={() => setJoinExpanded(true)}>SCAN TO JOIN · ENLARGE</button>}
         </aside>
 
-        <aside className="multiview-rail" aria-label="Live camera multiview">
+        <aside
+          id="crowdcut-camera-wall"
+          className={`multiview-rail ${mobileWallOpen ? "mobile-open" : "mobile-closed"}`}
+          aria-label="Live camera multiview"
+        >
           <header>
             <div><span className={showLive ? "live-dot" : "ready-dot"} /> LIVE CAMERA WALL</div>
-            <button className={`rail-mode ${directorAuto ? "auto" : "manual"}`} onClick={toggleDirectorAuto}>
-              {directorAuto ? "AUTO ON" : "MANUAL"}
-            </button>
+            <span className="rail-header-actions">
+              <button className={`rail-mode ${directorAuto ? "auto" : "manual"}`} onClick={toggleDirectorAuto}>
+                {directorAuto ? "AUTO ON" : "MANUAL"}
+              </button>
+              <button className="mobile-wall-close" type="button" onClick={() => setMobileWallOpen(false)}>DONE</button>
+            </span>
           </header>
           <div className="angle-distribution">{STAGE_ANGLES.map((angle) => `${angle[0]}:${feeds.filter((feed) => feed.angle === angle).length}`).join("  ·  ")}</div>
           <div className="selection-summary">

@@ -13,6 +13,12 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
+  // Current local Miniflare still requires the compatibility flag explicitly,
+  // while Sites production rejects it because the runtime now enables it by
+  // default. Keep it local-only so both environments use the same Node APIs.
+  ...(process.env.NODE_ENV === "development"
+    ? { compatibility_flags: ["nodejs_compat"] }
+    : {}),
   d1_databases: d1
     ? [
         {
