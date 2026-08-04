@@ -16,7 +16,11 @@ const localBindingConfig = {
   // Keep local Miniflare and the hosted Worker on the same supported runtime.
   // The build's vinext server bundle uses the Node compatibility shims supplied
   // by the hosting pipeline.
-  compatibility_date: "2026-05-22",
+  // Sites' Worker runtime made Node compatibility the default on 2026-08-04.
+  // Pinning that date and declaring only the explicit ALS surface prevents the
+  // publisher from injecting the now-redundant nodejs_compat flag.
+  compatibility_date: "2026-08-04",
+  compatibility_flags: ["nodejs_als"],
   d1_databases: d1
     ? [
         {

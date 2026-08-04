@@ -1,6 +1,6 @@
 "use client";
 
-import QRCode from "qrcode";
+import QRCode from "qrcode/lib/browser.js";
 import { ConvexClient } from "convex/browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Room as LiveRoom } from "livekit-client";
