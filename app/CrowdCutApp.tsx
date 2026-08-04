@@ -249,7 +249,7 @@ export default function CrowdCutApp() {
   const [hostCapability, setHostCapability] = useState("");
   const [qr, setQr] = useState("");
   const [joinUrl, setJoinUrl] = useState("");
-  const [joinExpanded, setJoinExpanded] = useState(false);
+  const [joinExpanded, setJoinExpanded] = useState(true);
   const [mobileWallOpen, setMobileWallOpen] = useState(false);
   const [joinCopied, setJoinCopied] = useState(false);
   const [feeds, setFeeds] = useState<Feed[]>([]);
@@ -309,8 +309,10 @@ export default function CrowdCutApp() {
   const heartbeatRef = useRef<number | null>(null);
   const directorStepRef = useRef(0);
   const feedsRef = useRef<Feed[]>([]);
+  const previousCrowdCameraCountRef = useRef(0);
   const sweepTokenRef = useRef(0);
   const serverClockOffsetRef = useRef(0);
+  const programAutoStartAttemptedRef = useRef(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1198,7 +1200,6 @@ export default function CrowdCutApp() {
       }
       setShowLive(true);
       setSessionStatus("live");
-      setJoinExpanded(false);
       setElapsed(0);
       setDirectorDecision(feedsRef.current.length
         ? "MANUAL HOLD · CLICK ANY ANGLE TO SHOW IT LIVE"
@@ -1210,6 +1211,25 @@ export default function CrowdCutApp() {
       setProgramStarting(false);
     }
   }, [connectTransport, convexSessionId, hostCapability, participantId, programStarting, send, showLive]);
+
+  useEffect(() => {
+    const isDedicatedProgramEntry = window.location.pathname === "/program";
+    const realtimeReady = !process.env.NEXT_PUBLIC_CONVEX_URL || Boolean(convexSessionId && hostCapability);
+    if (
+      !isDedicatedProgramEntry ||
+      view !== "program" ||
+      !booted ||
+      !participantId ||
+      !realtimeReady ||
+      showLive ||
+      programStarting ||
+      programAutoStartAttemptedRef.current
+    ) return;
+
+    programAutoStartAttemptedRef.current = true;
+    setJoinExpanded(true);
+    void startProgram();
+  }, [booted, convexSessionId, hostCapability, participantId, programStarting, showLive, startProgram, view]);
 
   const stopProgram = useCallback(async () => {
     if (!showLive || programStopping) return;
@@ -1238,7 +1258,7 @@ export default function CrowdCutApp() {
       roomRef.current = null;
       setFeeds([]);
       setSelectedCameraIds([]);
-      setJoinExpanded(false);
+      setJoinExpanded(true);
       setScene({ layout: "hero", activeIds: [], cutAt: 0, revision: Date.now() });
       setProgramComposition(1);
       setShowLive(false);
@@ -1490,6 +1510,14 @@ export default function CrowdCutApp() {
       setDirectorDecision(`BURST SAVED · ${saved.readyCount}/${saved.expectedCount} ANGLES READY`);
     });
   }, [burst, burstHistory, burstPhase, view]);
+
+  useEffect(() => {
+    const crowdCount = feeds.filter((feed) => !feed.local).length;
+    if (view === "program" && previousCrowdCameraCountRef.current === 0 && crowdCount > 0) {
+      setJoinExpanded(false);
+    }
+    previousCrowdCameraCountRef.current = crowdCount;
+  }, [feeds, view]);
 
   useEffect(() => () => {
     roomRef.current?.disconnect();

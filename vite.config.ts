@@ -13,10 +13,10 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  // Sites currently injects Node compatibility during publish. Pinning the
-  // preceding compatibility date keeps that injected flag valid across the
-  // platform's 2026-08-04 default transition.
-  compatibility_date: "2026-08-03",
+  // Keep local Miniflare and the hosted Worker on the same supported runtime.
+  // The build's vinext server bundle uses the Node compatibility shims supplied
+  // by the hosting pipeline.
+  compatibility_date: "2026-05-22",
   d1_databases: d1
     ? [
         {
@@ -36,7 +36,7 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command }) => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -45,6 +45,9 @@ export default defineConfig(async () => {
 
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
   const { cloudflare } = await import("@cloudflare/vite-plugin");
+  const runtimeBindingConfig = command === "serve"
+    ? { ...localBindingConfig, compatibility_flags: ["nodejs_compat"] }
+    : localBindingConfig;
 
   return {
     server: isCodexSeatbeltSandbox
@@ -55,7 +58,7 @@ export default defineConfig(async () => {
       sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
+        config: runtimeBindingConfig,
       }),
     ],
   };

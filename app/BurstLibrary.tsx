@@ -200,7 +200,7 @@ export function BurstLibrary({
           <p className="eyebrow">SAVED SYNCHRONIZED MOMENTS</p>
           <h2>VIEW BURSTS</h2>
         </div>
-        <button type="button" onClick={onClose}>BACK TO CAMERA ×</button>
+        <button type="button" onClick={onClose}>{programView ? "BACK TO FILM" : "BACK TO CAMERA"} ×</button>
       </header>
 
       <nav className="burst-library-tabs" aria-label="Choose a saved Burst">
