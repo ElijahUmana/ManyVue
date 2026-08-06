@@ -64,6 +64,47 @@ const AUTO_CADENCE_MS = 8_500;
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+function resumeVideo(video: HTMLVideoElement, stream: MediaStream, muted = true) {
+  if (video.srcObject !== stream) video.srcObject = stream;
+  video.muted = muted;
+  video.defaultMuted = muted;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  void video.play().catch(() => undefined);
+}
+
+function bindResilientPlayback(
+  video: HTMLVideoElement,
+  stream: MediaStream,
+  muted = true,
+) {
+  const resume = () => resumeVideo(video, stream, muted);
+  const resumeWhenVisible = () => {
+    if (document.visibilityState === "visible") resume();
+  };
+  const tracks = stream.getVideoTracks();
+  tracks.forEach((track) => {
+    track.addEventListener("unmute", resume);
+    track.addEventListener("mute", resume);
+  });
+  video.addEventListener("loadedmetadata", resume);
+  video.addEventListener("canplay", resume);
+  window.addEventListener("pageshow", resume);
+  document.addEventListener("visibilitychange", resumeWhenVisible);
+  resume();
+  return () => {
+    tracks.forEach((track) => {
+      track.removeEventListener("unmute", resume);
+      track.removeEventListener("mute", resume);
+    });
+    video.removeEventListener("loadedmetadata", resume);
+    video.removeEventListener("canplay", resume);
+    window.removeEventListener("pageshow", resume);
+    document.removeEventListener("visibilitychange", resumeWhenVisible);
+  };
+}
+
 function angleFromIdentity(identity: string): StageAngle {
   let hash = 0;
   for (let index = 0; index < identity.length; index += 1) {
@@ -183,10 +224,10 @@ function FeedVideo({ feed, muted = true }: { feed: Feed; muted?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (!ref.current) return;
-    ref.current.srcObject = feed.stream;
-    void ref.current.play().catch(() => undefined);
-  }, [feed.stream]);
+    const video = ref.current;
+    if (!video) return;
+    return bindResilientPlayback(video, feed.stream, muted);
+  }, [feed.stream, muted]);
 
   return <video ref={ref} data-feed-id={feed.id} autoPlay playsInline muted={muted} aria-label={`${feed.label} live camera`} />;
 }
@@ -349,6 +390,12 @@ export default function ManyVueApp() {
   useEffect(() => {
     feedsRef.current = feeds;
   }, [feeds]);
+
+  useEffect(() => {
+    const video = previewRef.current;
+    if (!video || !cameraStream) return;
+    return bindResilientPlayback(video, cameraStream, true);
+  }, [cameraStream]);
 
   useEffect(() => {
     if (burstPhase !== "preview") return;
@@ -987,11 +1034,17 @@ export default function ManyVueApp() {
         },
         audio: { echoCancellation: true, noiseSuppression: true },
       });
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack || videoTrack.readyState !== "live") {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("The camera opened without a live video track. Close other camera apps and try again.");
+      }
+      videoTrack.enabled = true;
+      videoTrack.contentHint = "motion";
       setCameraStream(stream);
       cameraStreamRef.current = stream;
       if (previewRef.current) {
-        previewRef.current.srcObject = stream;
-        await previewRef.current.play();
+        resumeVideo(previewRef.current, stream, true);
       }
 
       const convexCamera = await ensureConvexCamera();
@@ -1590,6 +1643,11 @@ export default function ManyVueApp() {
           autoPlay
           muted
           playsInline
+          disablePictureInPicture
+          onLoadedMetadata={(event) => {
+            const stream = cameraStreamRef.current;
+            if (stream) resumeVideo(event.currentTarget, stream, true);
+          }}
         />
         {recording && cameraViewMode === "live" && (
           <section className={`camera-live-browser ${cameraFocusedFeed ? "is-focused" : "is-gallery"}`} aria-label="Live Cuts angle viewer">
