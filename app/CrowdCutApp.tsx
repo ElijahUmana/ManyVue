@@ -7,7 +7,13 @@ import type { Room as LiveRoom } from "livekit-client";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { burstEditCandidates, listBurstAssets, uploadBurstCaptureAssets } from "@/lib/artifacts/burst-upload";
-import { DurableMediaRecorder, RollingBurstRecorder } from "@/lib/media";
+import {
+  BURST_POST_ROLL_MS,
+  BURST_PRE_ROLL_MS,
+  DurableMediaRecorder,
+  RollingBurstRecorder,
+  type RollingBurstCapture,
+} from "@/lib/media";
 import { probeVideoDurationMs, tryCreateContactSheet } from "@/lib/media/video-artifact";
 import { BurstLibrary, type BurstLibraryEntry } from "./BurstLibrary";
 
@@ -63,6 +69,65 @@ const PRODUCTION_SWEEP_STAGGER_MS = 1_350;
 const AUTO_CADENCE_MS = 8_500;
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+type BurstRecorder = {
+  readonly readyAtMs: number | null;
+  captureAt(anchorMs: number): Promise<RollingBurstCapture>;
+  stop(): Promise<void>;
+};
+
+function needsSingleRecorderPipeline() {
+  return /iPad|iPhone|iPod/iu.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * WebKit can black out a camera track when several MediaRecorders compete with
+ * WebRTC. On iPhone, the durable original is therefore also the Burst source:
+ * one encoder feeds both outcomes while the high-quality WebRTC track remains
+ * independent and continuously live.
+ */
+class SingleRecorderBurstBuffer implements BurstRecorder {
+  readonly readyAtMs: number;
+  private stopped = false;
+
+  constructor(
+    private readonly recorder: DurableMediaRecorder,
+    private readonly startedAtMs: number,
+  ) {
+    this.readyAtMs = startedAtMs + BURST_PRE_ROLL_MS;
+  }
+
+  async captureAt(anchorMs: number): Promise<RollingBurstCapture> {
+    if (this.stopped || this.recorder.state !== "recording") {
+      throw new Error("The iPhone Burst recorder is no longer running.");
+    }
+    if (anchorMs - BURST_PRE_ROLL_MS < this.startedAtMs) {
+      throw new Error("The exact three-second Burst pre-roll is still charging.");
+    }
+    await wait(Math.max(0, anchorMs + BURST_POST_ROLL_MS - Date.now()));
+    await this.recorder.flush();
+    const result = await this.recorder.result();
+    const endedAtMs = Date.now();
+    if (!result.blob.size) throw new Error("The iPhone Burst source contained no video data.");
+    return {
+      recordingId: result.recording.id,
+      blob: result.blob,
+      mimeType: result.recording.mimeType,
+      anchorMs,
+      segmentStartedAtMs: this.startedAtMs,
+      segmentEndedAtMs: endedAtMs,
+      burstOffsetMs: anchorMs - this.startedAtMs,
+      windowStartOffsetMs: anchorMs - this.startedAtMs - BURST_PRE_ROLL_MS,
+      windowEndOffsetMs: anchorMs - this.startedAtMs + BURST_POST_ROLL_MS,
+      availableDurationMs: endedAtMs - this.startedAtMs,
+    };
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+  }
+}
 
 function resumeVideo(video: HTMLVideoElement, stream: MediaStream, muted = true) {
   if (video.srcObject !== stream) video.srcObject = stream;
@@ -332,7 +397,7 @@ export default function ManyVueApp() {
   const participantIdRef = useRef("");
   const previewRef = useRef<HTMLVideoElement>(null);
   const recorderRef = useRef<DurableMediaRecorder | null>(null);
-  const rollingBurstRef = useRef<RollingBurstRecorder | null>(null);
+  const rollingBurstRef = useRef<BurstRecorder | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraOpeningRef = useRef(false);
   const burstCaptureIdsRef = useRef(new Set<string>());
@@ -1048,15 +1113,9 @@ export default function ManyVueApp() {
       }
 
       const convexCamera = await ensureConvexCamera();
-
-      const rollingBurst = new RollingBurstRecorder(stream, {
-        participantId: convexCamera.id,
-        onError: (error) => setArtifactMessage(`Rolling Burst buffer: ${error.message}`),
-      });
-      await rollingBurst.start();
-      rollingBurstRef.current = rollingBurst;
-      const rollingReadyAt = rollingBurst.readyAtMs;
-      if (rollingReadyAt === null) throw new Error("The Burst pre-roll recorder did not start.");
+      // Attach WebRTC before any local encoder starts. This prevents mobile
+      // WebKit from publishing an encoder-starved black camera track.
+      await connectTransport("camera", stream, convexCamera.livekitIdentity);
       const startedAt = Date.now();
       recordingStartedRef.current = startedAt;
 
@@ -1064,13 +1123,23 @@ export default function ManyVueApp() {
         recordingId: crypto.randomUUID(),
         participantId: convexCamera.id,
         chunkDurationMs: 1000,
-        videoBitsPerSecond: 4_000_000,
+        videoBitsPerSecond: needsSingleRecorderPipeline() ? 560_000 : 4_000_000,
+        audioBitsPerSecond: needsSingleRecorderPipeline() ? 48_000 : undefined,
       });
       await recorder.start();
+      const rollingBurst: BurstRecorder = needsSingleRecorderPipeline()
+        ? new SingleRecorderBurstBuffer(recorder, startedAt)
+        : new RollingBurstRecorder(stream, {
+            participantId: convexCamera.id,
+            onError: (error) => setArtifactMessage(`Rolling Burst buffer: ${error.message}`),
+          });
+      if (rollingBurst instanceof RollingBurstRecorder) await rollingBurst.start();
+      rollingBurstRef.current = rollingBurst;
+      const rollingReadyAt = rollingBurst.readyAtMs;
+      if (rollingReadyAt === null) throw new Error("The Burst pre-roll recorder did not start.");
       setCameraStartedAt(startedAt);
       recorderRef.current = recorder;
       setBurstBufferReady(false);
-      await connectTransport("camera", stream, convexCamera.livekitIdentity);
       setTransportMessage("Priming the exact three-second pre-roll…");
       await wait(Math.max(0, rollingReadyAt - Date.now()));
       if (rollingBurstRef.current !== rollingBurst || cameraStreamRef.current !== stream) {
