@@ -1,4 +1,5 @@
 import { fetchFestivalNow } from "@/lib/artifacts/jambase";
+import { runtimeValue } from "@/lib/runtime/environment";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +12,10 @@ export async function GET(request: Request) {
       ...(url.searchParams.get("startDateTo") ? { startDateTo: url.searchParams.get("startDateTo") as string } : {}),
     },
     {
-      JAMBASE_API_KEY: process.env.JAMBASE_API_KEY,
-      JAMBASE_API_BASE_URL: process.env.JAMBASE_API_BASE_URL,
+      JAMBASE_API_KEY: runtimeValue("JAMBASE_API_KEY"),
+      JAMBASE_API_BASE_URL: runtimeValue("JAMBASE_API_BASE_URL"),
     },
   );
   const status = result.state === "ready" ? 200 : result.state === "unconfigured" ? 503 : result.status === 400 ? 400 : 502;
   return Response.json(result, { status });
 }
-

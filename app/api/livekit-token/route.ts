@@ -1,4 +1,5 @@
 import { SignJWT } from "jose";
+import { runtimeValue } from "@/lib/runtime/environment";
 
 export const runtime = "edge";
 
@@ -7,9 +8,9 @@ const safe = (value: string | null, fallback: string) =>
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const livekitUrl = process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL;
-  const apiKey = process.env.LIVEKIT_API_KEY;
-  const apiSecret = process.env.LIVEKIT_API_SECRET;
+  const livekitUrl = runtimeValue("LIVEKIT_URL") || runtimeValue("NEXT_PUBLIC_LIVEKIT_URL");
+  const apiKey = runtimeValue("LIVEKIT_API_KEY");
+  const apiSecret = runtimeValue("LIVEKIT_API_SECRET");
 
   if (!livekitUrl || !apiKey || !apiSecret) {
     return Response.json(

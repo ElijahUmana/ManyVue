@@ -1,13 +1,14 @@
 import { planManyVueEdit } from "@/lib/ai/openai-edit-planner";
 import { validateEditRecipeInput } from "@/lib/ai/edit-recipe";
+import { runtimeValue } from "@/lib/runtime/environment";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   return Response.json({
     service: "openai-edit-planner",
-    state: process.env.OPENAI_API_KEY ? "configured" : "unconfigured",
-    model: process.env.OPENAI_MODEL || "gpt-5.6-sol",
+    state: runtimeValue("OPENAI_API_KEY") ? "configured" : "unconfigured",
+    model: runtimeValue("OPENAI_MODEL") || "gpt-5.6-sol",
   });
 }
 
@@ -27,8 +28,7 @@ export async function POST(request: Request) {
 
 function planCrowCutEditCompat(input: Parameters<typeof planManyVueEdit>[0]) {
   return planManyVueEdit(input, {
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    OPENAI_MODEL: process.env.OPENAI_MODEL,
+    OPENAI_API_KEY: runtimeValue("OPENAI_API_KEY"),
+    OPENAI_MODEL: runtimeValue("OPENAI_MODEL"),
   });
 }
-
