@@ -13,20 +13,18 @@
   ·
   <a href="#the-convex-centered-architecture">Architecture</a>
   ·
-  <a href="#run-the-live-demo">Demo flow</a>
+  <a href="#operate-a-live-production">Operations</a>
   ·
   <a href="#run-locally">Run locally</a>
-  ·
-  <a href="docs/ARCHITECTURE_DEMO_SCRIPT.md">15-second architecture script</a>
 </p>
 
 ManyVue turns the phones already recording a concert into one synchronized camera crew. Fans keep their own original recording, watch their perspective enter a shared live production, capture a musical instant across every active phone, and receive a personal multi-angle film made from the real crowd around them.
 
-Built for the **OutsideLLMs / Outside Lands** fan-experience challenge, with **Convex as the realtime control plane** coordinating the room.
+**Convex is the realtime control plane** coordinating live participants, authoritative program state, synchronized capture, media provenance, and personalized artifact readiness across the room.
 
-## The product in one minute
+## How the production works
 
-1. The presenter opens the Program View and starts a live film.
+1. The production operator opens the Program View and starts a live film.
 2. Fans scan one QR code—no account or app install. The browser asks for Camera once; tapping **Allow** immediately publishes, records, and primes Burst capture without a second start action.
 3. Every fan gets **Live Cuts**: a private realtime gallery of every connected angle. They can open any view full screen and return to **My Angle** without changing the shared production.
 4. On the Program View, clicking a camera immediately shows it live. A separate **+ Multiview** control builds deliberate 2–5 angle compositions without conflating browsing and directing.
@@ -59,7 +57,7 @@ The camera selected by the room and the phone receiving the live confirmation ar
 
 ### 3. Crowd Burst
 
-The presenter or any recording attendee can tap a Burst immediately—there is no room-wide countdown. From the instant Camera permission resolves, each phone continuously maintains overlapping, independently playable low-bitrate recordings. Convex snapshots the eligible camera set at tap time and reactively fans out one shared anchor.
+The production operator or any recording attendee can tap a Burst immediately—there is no room-wide countdown. From the instant Camera permission resolves, each phone continuously maintains overlapping, independently playable low-bitrate recordings. Convex snapshots the eligible camera set at tap time and reactively fans out one shared anchor.
 
 Every eligible phone silently:
 
@@ -120,7 +118,7 @@ The media path can scale or change providers without changing the product's shar
 
 ```mermaid
 flowchart TB
-  subgraph Crowd["Festival floor — real browser clients"]
+  subgraph Crowd["Live venue — real browser clients"]
     PhoneA["Phone A<br/>local original + live angle"]
     PhoneB["Phone B<br/>local original + live angle"]
     PhoneN["Phone N<br/>late join / reconnect"]
@@ -232,7 +230,7 @@ These are enforced constants or authorization boundaries, not aspirational metri
 | Burst cluster window | **1.5 seconds** | Nearby independent taps share one real moment without moving its original anchor. |
 | Burst contribution deadline | **8 seconds** | Bounds collection and prevents abandoned cameras from holding an artifact forever. |
 | Rolling desktop segments | **10 seconds**, opened every **3 seconds** | Guarantees a complete six-second window despite segment boundaries. |
-| Burst source ceiling | **1.8 MB ingress**, **950 KB target** | Keeps uploads reliable on festival networks and below the deployed edge boundary. |
+| Burst source ceiling | **1.8 MB ingress**, **950 KB target** | Keeps uploads reliable on congested event networks and below the deployed edge boundary. |
 | Signed replay URL | **24-hour HMAC lease** | Renderers can fetch a real source without making the storage bucket enumerable or public. |
 | Room credential | **2-hour**, room- and identity-scoped | Prevents arbitrary cross-room publication while surviving a complete set. |
 
@@ -254,7 +252,7 @@ Convex is not a database attached after the interesting work. It is the distribu
 ```mermaid
 sequenceDiagram
   autonumber
-  actor Host as Presenter / Program View
+  actor Host as Production operator / Program View
   participant C as Convex
   participant A as Fan phone A
   participant B as Fan phone B
@@ -312,11 +310,11 @@ The Convex schema records the production as a sequence of explicit, auditable st
 
 Indexes cover the hot realtime paths: session slug, participant/session membership, presence age, scene revision/idempotency, Burst time/status, per-participant contribution, asset ownership, and provider render IDs.
 
-## Run the live demo
+## Operate a live production
 
-The live deployment is [manyvue-live.ild.chatgpt.site](https://manyvue-live.ild.chatgpt.site/).
+The deployed application is [manyvue-live.ild.chatgpt.site](https://manyvue-live.ild.chatgpt.site/).
 
-1. Open the URL on the laptop connected to the main display.
+1. Open the Program View on the production computer connected to the main display.
 2. Click **Start Film**.
 3. Expand the persistent QR code and scan it with at least two phones.
 4. On each phone, tap the browser's **Allow Camera** prompt. The angle immediately publishes and records; use the compact Left / Center / Right control only if the inferred stage position needs correction.
@@ -380,7 +378,7 @@ Open `http://localhost:3000` for the Program View. Its QR code generates the mat
 | `OPENAI_API_KEY`, `OPENAI_MODEL` | Live vision direction and structured edit recipes. |
 | `SHOTSTACK_API_KEY`, `SHOTSTACK_API_BASE_URL` | Production MP4 rendering and status verification. |
 | `SHOTSTACK_WEBHOOK_URL`, `SHOTSTACK_WEBHOOK_TOKEN` | Authenticated render completion callback. |
-| `JAMBASE_API_KEY`, `JAMBASE_API_BASE_URL` | Optional live festival/set metadata. |
+| `JAMBASE_API_KEY`, `JAMBASE_API_BASE_URL` | Optional live event and set metadata. |
 
 Never commit `.env.local`; environment files are ignored by Git.
 
