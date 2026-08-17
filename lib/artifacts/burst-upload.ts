@@ -31,12 +31,25 @@ export interface ListedMediaAsset {
 export interface BurstCaptureUploadInput {
   session: string;
   participant: string;
+  participantCapability: string;
   burstId: string;
   clip: Blob;
   thumbnail?: Blob | null;
   durationMs: number;
   burstOffsetMs: number;
 }
+
+export type BurstMediaAccess =
+  | {
+      role: "participant";
+      participantId: string;
+      participantCapability: string;
+    }
+  | {
+      role: "host";
+      sessionId: string;
+      hostCapability: string;
+    };
 
 export interface BurstCaptureUploadResult {
   clip: UploadedMediaAsset;
@@ -81,6 +94,7 @@ async function uploadOne(
   input: {
     session: string;
     participant: string;
+    participantCapability: string;
     burstId: string;
     kind: "burst-source" | "thumbnail";
     clientAssetId: string;
@@ -103,7 +117,17 @@ async function uploadOne(
       type: input.blob.type || "application/octet-stream",
     }),
   );
-  const response = await requestWithRetry(fetcher, "/api/uploads", { method: "POST", body: form });
+  const response = await requestWithRetry(fetcher, "/api/uploads", {
+    method: "POST",
+    headers: {
+      "x-manyvue-media-role": "participant",
+      "x-manyvue-session-slug": input.session,
+      "x-manyvue-participant-id": input.participant,
+      "x-manyvue-participant-capability": input.participantCapability,
+      "x-manyvue-burst-id": input.burstId,
+    },
+    body: form,
+  });
   const payload = await response.json().catch(() => null) as {
     ok?: boolean;
     key?: string;
@@ -179,12 +203,28 @@ export async function uploadBurstCaptureAssets(
 export async function listBurstAssets(
   session: string,
   burstId: string,
+  access: BurstMediaAccess,
   fetcher: FetchLike = fetch,
 ): Promise<ListedMediaAsset[]> {
   const query = new URLSearchParams({ list: "1", session, burstId });
+  const headers: Record<string, string> = access.role === "host"
+    ? {
+        "x-manyvue-media-role": "host",
+        "x-manyvue-session-id": access.sessionId,
+        "x-manyvue-host-capability": access.hostCapability,
+        "x-manyvue-session-slug": session,
+        "x-manyvue-burst-id": burstId,
+      }
+    : {
+        "x-manyvue-media-role": "participant",
+        "x-manyvue-participant-id": access.participantId,
+        "x-manyvue-participant-capability": access.participantCapability,
+        "x-manyvue-session-slug": session,
+        "x-manyvue-burst-id": burstId,
+      };
   let response: Response;
   try {
-    response = await requestWithRetry(fetcher, `/api/uploads?${query}`, { cache: "no-store" });
+    response = await requestWithRetry(fetcher, `/api/uploads?${query}`, { cache: "no-store", headers });
   } catch (error) {
     throw new BurstUploadError("listing", "The Burst source listing could not be reached.", error);
   }

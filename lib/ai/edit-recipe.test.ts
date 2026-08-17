@@ -11,8 +11,8 @@ test("four-second Burst microclips can be reused in an eight-second truthful cut
       {
         id: "owner-source",
         cameraId: "camera-owner",
-        clipUrl: "https://crowdcut.test/owner.mp4",
-        contactSheetUrl: "https://crowdcut.test/owner.jpg",
+        clipUrl: "https://manyvue.test/owner.mp4",
+        contactSheetUrl: "https://manyvue.test/owner.jpg",
         availableDurationMs: 4_000,
         burstOffsetMs: 1_500,
         qualityScore: 0.9,
@@ -20,7 +20,7 @@ test("four-second Burst microclips can be reused in an eight-second truthful cut
       {
         id: "crowd-source",
         cameraId: "camera-crowd",
-        clipUrl: "https://crowdcut.test/crowd.mp4",
+        clipUrl: "https://manyvue.test/crowd.mp4",
         availableDurationMs: 4_000,
         burstOffsetMs: 1_500,
         qualityScore: 0.8,

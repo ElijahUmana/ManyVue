@@ -103,7 +103,7 @@ function BurstReplay({
           <p>{anchor === "mine" ? "MY ANGLE · ANCHOR" : anchor === "host" ? "HOST ANGLE · ANCHOR" : anchor === "lead" ? "LEAD SAVED ANGLE" : "CROWD ANGLE"}</p>
           <b>{anchor === "mine" ? "The moment from where I stood" : anchor === "host" ? "The published laptop camera" : anchor === "lead" ? "First available synchronized perspective" : `CAM ${source.participantId.slice(-4).toUpperCase()}`}</b>
         </div>
-        <a href={source.asset.url} download={`crowdcut-burst-${source.participantId}.webm`}>
+        <a href={source.asset.url} download={`manyvue-burst-${source.participantId}.webm`}>
           DOWNLOAD
         </a>
       </div>
@@ -115,6 +115,9 @@ export function BurstLibrary({
   open,
   sessionId,
   ownerParticipantId,
+  participantCapability,
+  convexSessionId,
+  hostCapability,
   bursts,
   programView = false,
   onClose,
@@ -122,6 +125,9 @@ export function BurstLibrary({
   open: boolean;
   sessionId: string;
   ownerParticipantId: string;
+  participantCapability: string;
+  convexSessionId?: string;
+  hostCapability?: string;
   bursts: BurstLibraryEntry[];
   programView?: boolean;
   onClose: () => void;
@@ -138,24 +144,33 @@ export function BurstLibrary({
   const selectedBurstId = selected?.id ?? "";
   const selectedExpectedCount = selected?.expectedCount ?? 0;
 
+  const mediaAccess = useMemo(() => programView
+    ? convexSessionId && hostCapability
+      ? { role: "host" as const, sessionId: convexSessionId, hostCapability }
+      : null
+    : participantCapability
+      ? { role: "participant" as const, participantId: ownerParticipantId, participantCapability }
+      : null,
+  [convexSessionId, hostCapability, ownerParticipantId, participantCapability, programView]);
+
   const load = useCallback(async () => {
-    if (!open || !selectedBurstId) return;
+    if (!open || !selectedBurstId || !mediaAccess) return;
     setLoading(true);
     setMessage("");
     try {
-      setAssets(await listBurstAssets(sessionId, selectedBurstId));
+      setAssets(await listBurstAssets(sessionId, selectedBurstId, mediaAccess));
       setLoadedBurstId(selectedBurstId);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The saved Burst angles could not be loaded.");
     } finally {
       setLoading(false);
     }
-  }, [open, selectedBurstId, sessionId]);
+  }, [mediaAccess, open, selectedBurstId, sessionId]);
 
   useEffect(() => {
-    if (!open || !selectedBurstId) return;
+    if (!open || !selectedBurstId || !mediaAccess) return;
     let cancelled = false;
-    void listBurstAssets(sessionId, selectedBurstId).then((next) => {
+    void listBurstAssets(sessionId, selectedBurstId, mediaAccess).then((next) => {
       if (!cancelled) {
         setAssets(next);
         setLoadedBurstId(selectedBurstId);
@@ -164,7 +179,7 @@ export function BurstLibrary({
       if (!cancelled) setMessage(error instanceof Error ? error.message : "The saved Burst angles could not be loaded.");
     });
     return () => { cancelled = true; };
-  }, [open, selectedBurstId, sessionId]);
+  }, [mediaAccess, open, selectedBurstId, sessionId]);
 
   const sources = useMemo(() => {
     if (loadedBurstId !== selectedBurstId) return [];

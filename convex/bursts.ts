@@ -314,6 +314,52 @@ export const activeCaptureAnchor = query({
   },
 });
 
+/** Server-to-server authorization for Burst upload and replay access. */
+export const authorizeParticipantMedia = query({
+  args: {
+    participantId: v.id("participants"),
+    participantCapability: v.string(),
+    burstId: v.id("bursts"),
+    sessionSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await assertParticipant(ctx, args.participantId, args.participantCapability);
+    const burst = await ctx.db.get(args.burstId);
+    const session = await ctx.db.get(participant.sessionId);
+    if (!burst || !session || burst.sessionId !== participant.sessionId || session.slug !== args.sessionSlug) {
+      throw new ConvexError({ code: "MEDIA_FORBIDDEN", message: "Burst does not belong to this camera session." });
+    }
+    const contribution = await ctx.db
+      .query("burstContributions")
+      .withIndex("by_burst_participant", (q) =>
+        q.eq("burstId", burst._id).eq("participantId", participant._id),
+      )
+      .unique();
+    const initiated = burst.initiatorParticipantIds.includes(participant._id);
+    if (!contribution && !initiated) {
+      throw new ConvexError({ code: "MEDIA_FORBIDDEN", message: "Camera did not participate in this Burst." });
+    }
+    return { canRead: true, canWrite: Boolean(contribution), sessionId: session._id };
+  },
+});
+
+export const authorizeHostMedia = query({
+  args: {
+    sessionId: v.id("sessions"),
+    hostCapability: v.string(),
+    burstId: v.id("bursts"),
+    sessionSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await assertHost(ctx, args.sessionId, args.hostCapability);
+    const burst = await ctx.db.get(args.burstId);
+    if (!burst || burst.sessionId !== session._id || session.slug !== args.sessionSlug) {
+      throw new ConvexError({ code: "MEDIA_FORBIDDEN", message: "Burst does not belong to this production." });
+    }
+    return { canRead: true, canWrite: false };
+  },
+});
+
 export const recentHistory = query({
   args: {
     participantId: v.id("participants"),

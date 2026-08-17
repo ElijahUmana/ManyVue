@@ -4,6 +4,8 @@ import type {
   StoredRecording,
 } from "./types";
 
+// Keep the original on-device namespace so the ManyVue rebrand never strands
+// durable recordings that were captured before the rename.
 const DATABASE_NAME = "crowdcut-media-v1";
 const DATABASE_VERSION = 1;
 const RECORDINGS = "recordings";

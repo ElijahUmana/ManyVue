@@ -95,7 +95,7 @@ export function buildOpenAIEditRequest(input: EditRecipeInput, model = DEFAULT_M
       verbosity: "low",
       format: {
         type: "json_schema",
-        name: "crowdcut_edit_recipe",
+        name: "manyvue_edit_recipe",
         strict: true,
         schema: EDIT_RECIPE_JSON_SCHEMA,
       },

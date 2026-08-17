@@ -228,7 +228,7 @@ def draw_pdf():
 
     # Footer.
     label(c, "ONE PERSON RECORDS A CLIP. A CROWD CREATES THE FILM.", 30, 34, size=7.4, color=PINK)
-    label(c, "crowdcut-live.ild.chatgpt.site", 394, 34, size=7.1, color=WHITE, align="center", font="Helvetica")
+    label(c, "manyvue-live.ild.chatgpt.site", 394, 34, size=7.1, color=WHITE, align="center", font="Helvetica")
     label(c, "LIVE MULTI-ANGLE PRODUCTION  /  PERSONAL SYNCHRONIZED ARTIFACTS  /  CONVEX-NATIVE REALTIME STATE",
           396, 15, size=6.1, color=DIM, align="center")
 

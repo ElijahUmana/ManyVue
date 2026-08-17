@@ -2,10 +2,10 @@ import type { Metadata } from "next";
 import ManyVueApp from "../ManyVueApp";
 
 export const metadata: Metadata = {
-  title: "Program View",
-  description: "Direct the ManyVue live multi-angle concert film.",
+  title: "Camera",
+  description: "Allow Camera once and become a live ManyVue angle immediately.",
 };
 
-export default function ProgramPage() {
+export default function CameraPage() {
   return <ManyVueApp />;
 }

@@ -2,6 +2,7 @@
 
 import QRCode from "qrcode/lib/browser.js";
 import { ConvexClient } from "convex/browser";
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Room as LiveRoom } from "livekit-client";
 import { api } from "@/convex/_generated/api";
@@ -10,11 +11,14 @@ import { burstEditCandidates, listBurstAssets, uploadBurstCaptureAssets } from "
 import {
   BURST_POST_ROLL_MS,
   BURST_PRE_ROLL_MS,
+  createRecorderStreamLease,
   DurableMediaRecorder,
+  selectDurableBurstChunks,
   RollingBurstRecorder,
   type RollingBurstCapture,
 } from "@/lib/media";
 import { probeVideoDurationMs, tryCreateContactSheet } from "@/lib/media/video-artifact";
+import { PRESENCE_HEARTBEAT_MS } from "@/lib/realtime/constants";
 import { BurstLibrary, type BurstLibraryEntry } from "./BurstLibrary";
 
 type Feed = {
@@ -32,6 +36,7 @@ type ProgramComposition = 1 | 2 | 3 | 4 | 5 | "sweep";
 type BurstPhase = "idle" | "capturing" | "preview" | "preserved";
 type ArtifactPhase = "idle" | "saved" | "uploading" | "waiting" | "editing" | "rendering" | "ready" | "failed";
 type SessionStatus = "lobby" | "live" | "ended";
+type CameraPermissionState = "idle" | "requesting" | "granted" | "blocked" | "error";
 type HostSession = { sessionId: string; slug: string; hostCapability: string };
 type StoredParticipant = {
   participantId: string;
@@ -108,19 +113,27 @@ class SingleRecorderBurstBuffer implements BurstRecorder {
     await wait(Math.max(0, anchorMs + BURST_POST_ROLL_MS - Date.now()));
     await this.recorder.flush();
     const result = await this.recorder.result();
-    const endedAtMs = Date.now();
-    if (!result.blob.size) throw new Error("The iPhone Burst source contained no video data.");
+    const selected = selectDurableBurstChunks(
+      result.chunks,
+      this.startedAtMs,
+      anchorMs,
+      BURST_PRE_ROLL_MS,
+      BURST_POST_ROLL_MS,
+    );
+    if (!selected) throw new Error("The iPhone recorder did not retain the complete three-second pre/post window.");
+    const blob = new Blob(selected.chunks.map((chunk) => chunk.blob), { type: result.recording.mimeType });
+    if (!blob.size) throw new Error("The iPhone Burst source contained no video data.");
     return {
       recordingId: result.recording.id,
-      blob: result.blob,
+      blob,
       mimeType: result.recording.mimeType,
       anchorMs,
-      segmentStartedAtMs: this.startedAtMs,
-      segmentEndedAtMs: endedAtMs,
+      segmentStartedAtMs: selected.timelineStartedAtMs,
+      segmentEndedAtMs: selected.coverageEndedAtMs,
       burstOffsetMs: anchorMs - this.startedAtMs,
       windowStartOffsetMs: anchorMs - this.startedAtMs - BURST_PRE_ROLL_MS,
       windowEndOffsetMs: anchorMs - this.startedAtMs + BURST_POST_ROLL_MS,
-      availableDurationMs: endedAtMs - this.startedAtMs,
+      availableDurationMs: selected.coverageEndedAtMs - this.startedAtMs,
     };
   }
 
@@ -300,7 +313,15 @@ function FeedVideo({ feed, muted = true }: { feed: Feed; muted?: boolean }) {
 function BrandMark() {
   return (
     <div className="brand-mark" aria-label="ManyVue Live">
-      <span className="brand-orbit" aria-hidden="true"><i /><i /><i /></span>
+      <Image
+        className="brand-app-icon"
+        src="/manyvue-icon.png"
+        alt=""
+        width={34}
+        height={34}
+        priority
+        unoptimized
+      />
       <span>MANY<span>VUE</span></span>
       <b>LIVE</b>
     </div>
@@ -368,6 +389,7 @@ export default function ManyVueApp() {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("lobby");
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraOpening, setCameraOpening] = useState(false);
+  const [cameraPermissionState, setCameraPermissionState] = useState<CameraPermissionState>("idle");
   const [cameraViewMode, setCameraViewMode] = useState<"mine" | "live">("mine");
   const [cameraFocusedFeedId, setCameraFocusedFeedId] = useState("");
   const [cameraStartedAt, setCameraStartedAt] = useState(0);
@@ -398,6 +420,7 @@ export default function ManyVueApp() {
   const previewRef = useRef<HTMLVideoElement>(null);
   const recorderRef = useRef<DurableMediaRecorder | null>(null);
   const rollingBurstRef = useRef<BurstRecorder | null>(null);
+  const recorderStreamReleaseRef = useRef<(() => void) | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraOpeningRef = useRef(false);
   const burstCaptureIdsRef = useRef(new Set<string>());
@@ -419,17 +442,22 @@ export default function ManyVueApp() {
   const sweepTokenRef = useRef(0);
   const serverClockOffsetRef = useRef(0);
   const programAutoStartAttemptedRef = useRef(false);
+  const cameraAutoStartAttemptedRef = useRef(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const nextView = params.get("view") === "camera" ? "camera" : "program";
+    const nextView = window.location.pathname === "/camera" || params.get("view") === "camera" ? "camera" : "program";
     const nextSession = params.get("session") || "outside-live";
-    const stored = window.localStorage.getItem("crowdcut-participant") || crypto.randomUUID();
-    const savedAngle = window.localStorage.getItem(`crowdcut-angle-${nextSession}`);
+    const stored = window.localStorage.getItem("manyvue-participant")
+      ?? window.localStorage.getItem("crowdcut-participant")
+      ?? crypto.randomUUID();
+    const savedAngle = window.localStorage.getItem(`manyvue-angle-${nextSession}`)
+      ?? window.localStorage.getItem(`crowdcut-angle-${nextSession}`);
     const initialAngle = STAGE_ANGLES.includes(savedAngle as StageAngle)
       ? (savedAngle as StageAngle)
       : angleFromIdentity(stored);
-    window.localStorage.setItem("crowdcut-participant", stored);
+    window.localStorage.setItem("manyvue-participant", stored);
+    window.localStorage.removeItem("crowdcut-participant");
     queueMicrotask(() => {
       setView(nextView);
       setSessionId(nextSession);
@@ -447,10 +475,27 @@ export default function ManyVueApp() {
 
   const chooseCameraAngle = useCallback((angle: StageAngle) => {
     const suffix = participantName.match(/·\s*(.+)$/u)?.[1] ?? participantId.slice(0, 4).toUpperCase();
+    const nextName = `${angle} · ${suffix}`;
     setCameraAngle(angle);
-    setParticipantName(`${angle} · ${suffix}`);
-    window.localStorage.setItem(`crowdcut-angle-${sessionId}`, angle);
-  }, [participantId, participantName, sessionId]);
+    setParticipantName(nextName);
+    window.localStorage.setItem(`manyvue-angle-${sessionId}`, angle);
+    window.localStorage.removeItem(`crowdcut-angle-${sessionId}`);
+    if (roomRef.current?.state === "connected") {
+      void roomRef.current.localParticipant.setName(nextName).catch(() => undefined);
+    }
+    if (convexRef.current && participantCapability && participantId) {
+      void convexRef.current.mutation(api.participants.updateShotMetadata, {
+        participantId: participantId as Id<"participants">,
+        participantCapability,
+        shotMetadata: {
+          stageZone: angle.toLowerCase() as "left" | "center" | "right",
+          framing: "unknown",
+          confidence: 1,
+          source: "self_reported",
+        },
+      }).catch((error) => setTransportMessage(error instanceof Error ? error.message : "Stage position could not update."));
+    }
+  }, [participantCapability, participantId, participantName, sessionId]);
 
   useEffect(() => {
     feedsRef.current = feeds;
@@ -473,7 +518,7 @@ export default function ManyVueApp() {
 
   useEffect(() => {
     if (!sessionId || view !== "program" || !convexSessionId) return;
-    const nextJoinUrl = `${window.location.origin}/?view=camera&session=${encodeURIComponent(sessionId)}`;
+    const nextJoinUrl = `${window.location.origin}/camera?session=${encodeURIComponent(sessionId)}`;
     void QRCode.toDataURL(nextJoinUrl, {
       width: 960,
       margin: 5,
@@ -551,7 +596,8 @@ export default function ManyVueApp() {
 
     void (async () => {
       if (view !== "program") return;
-      const stored = window.localStorage.getItem("crowdcut-host-session");
+      const stored = window.localStorage.getItem("manyvue-host-session")
+        ?? window.localStorage.getItem("crowdcut-host-session");
       let host: HostSession | null = null;
       if (stored) {
         try { host = JSON.parse(stored) as HostSession; } catch { host = null; }
@@ -565,20 +611,25 @@ export default function ManyVueApp() {
         }
       }
       if (!host) {
+        window.localStorage.removeItem("manyvue-host-session");
         window.localStorage.removeItem("crowdcut-host-session");
         host = await client.action(api.sessions.create, {
           title: "Outside Lands ManyVue Live",
           festivalName: "Outside Lands",
           stageName: "Hackathon Live",
         }) as HostSession;
-        window.localStorage.setItem("crowdcut-host-session", JSON.stringify(host));
+        window.localStorage.setItem("manyvue-host-session", JSON.stringify(host));
+        window.localStorage.removeItem("crowdcut-host-session");
       }
       if (!host || cancelled) return;
+      window.localStorage.setItem("manyvue-host-session", JSON.stringify(host));
+      window.localStorage.removeItem("crowdcut-host-session");
       setSessionId(host.slug);
       setConvexSessionId(host.sessionId);
       setHostCapability(host.hostCapability);
       let joined: StoredParticipant | null = null;
-      const storedParticipant = window.localStorage.getItem("crowdcut-program-participant");
+      const storedParticipant = window.localStorage.getItem("manyvue-program-participant")
+        ?? window.localStorage.getItem("crowdcut-program-participant");
       if (storedParticipant) {
         try {
           const candidate = JSON.parse(storedParticipant) as Partial<StoredParticipant>;
@@ -598,6 +649,7 @@ export default function ManyVueApp() {
             joined = candidate as StoredParticipant;
           }
         } catch {
+          window.localStorage.removeItem("manyvue-program-participant");
           window.localStorage.removeItem("crowdcut-program-participant");
         }
       }
@@ -614,10 +666,12 @@ export default function ManyVueApp() {
       setParticipantId(String(joined.participantId));
       participantIdRef.current = String(joined.participantId);
       setParticipantCapability(joined.participantCapability);
-      window.localStorage.setItem("crowdcut-program-participant", JSON.stringify(joined));
+      window.localStorage.setItem("manyvue-program-participant", JSON.stringify(joined));
+      window.localStorage.removeItem("crowdcut-program-participant");
       subscribe(host.slug);
       setTransportMessage("Convex production room ready");
     })().catch((error) => {
+      window.localStorage.removeItem("manyvue-host-session");
       window.localStorage.removeItem("crowdcut-host-session");
       setTransport("error");
       setTransportMessage(error instanceof Error ? error.message : "Convex room setup failed.");
@@ -658,7 +712,7 @@ export default function ManyVueApp() {
 
   useEffect(() => {
     if (!sessionId) return;
-    const channel = new BroadcastChannel(`crowdcut-${sessionId}`);
+    const channel = new BroadcastChannel(`manyvue-${sessionId}`);
     channel.onmessage = (event) => applyMessage(event.data as WireMessage);
     channelRef.current = channel;
     return () => channel.close();
@@ -670,7 +724,7 @@ export default function ManyVueApp() {
     if (room?.state === "connected") {
       await room.localParticipant.publishData(encoder.encode(JSON.stringify(message)), {
         reliable: true,
-        topic: "crowdcut-control",
+        topic: "manyvue-control",
       });
     }
   }, []);
@@ -683,6 +737,8 @@ export default function ManyVueApp() {
   }, [joinUrl]);
 
   const createFreshRoom = useCallback(() => {
+    window.localStorage.removeItem("manyvue-host-session");
+    window.localStorage.removeItem("manyvue-program-participant");
     window.localStorage.removeItem("crowdcut-host-session");
     window.localStorage.removeItem("crowdcut-program-participant");
     window.location.reload();
@@ -695,18 +751,44 @@ export default function ManyVueApp() {
     let capability = participantCapability;
     let livekitIdentity = participantId;
     if (!capability) {
-      const joined = await client.action(api.participants.join, {
-        sessionSlug: sessionId,
-        displayName: participantName,
-        role: "attendee",
-        deviceInfo: { platform: navigator.platform, userAgent: navigator.userAgent },
-        shotMetadata: {
-          stageZone: cameraAngle.toLowerCase() as "left" | "center" | "right",
-          framing: "unknown",
-          confidence: 1,
-          source: "self_reported",
-        },
-      });
+      let joined: StoredParticipant | null = null;
+      const storageKey = `manyvue-camera-${sessionId}`;
+      const stored = window.localStorage.getItem(storageKey)
+        ?? window.localStorage.getItem(`crowdcut-camera-${sessionId}`);
+      if (stored) {
+        try {
+          const candidate = JSON.parse(stored) as Partial<StoredParticipant>;
+          const currentSession = await client.query(api.sessions.bySlug, { slug: sessionId });
+          if (
+            candidate.sessionId === String(currentSession._id) &&
+            candidate.participantId &&
+            candidate.participantCapability &&
+            candidate.livekitIdentity
+          ) {
+            await client.query(api.participants.me, {
+              participantId: candidate.participantId as Id<"participants">,
+              participantCapability: candidate.participantCapability,
+            });
+            joined = candidate as StoredParticipant;
+          }
+        } catch {
+          joined = null;
+        }
+      }
+      if (!joined) {
+        joined = await client.action(api.participants.join, {
+          sessionSlug: sessionId,
+          displayName: participantName,
+          role: "attendee",
+          deviceInfo: { platform: navigator.platform, userAgent: navigator.userAgent },
+          shotMetadata: {
+            stageZone: cameraAngle.toLowerCase() as "left" | "center" | "right",
+            framing: "unknown",
+            confidence: 1,
+            source: "self_reported",
+          },
+        }) as StoredParticipant;
+      }
       id = String(joined.participantId);
       capability = joined.participantCapability;
       livekitIdentity = joined.livekitIdentity;
@@ -714,7 +796,8 @@ export default function ManyVueApp() {
       participantIdRef.current = id;
       setParticipantCapability(capability);
       setConvexSessionId(String(joined.sessionId));
-      window.localStorage.setItem(`crowdcut-camera-${sessionId}`, JSON.stringify(joined));
+      window.localStorage.setItem(storageKey, JSON.stringify(joined));
+      window.localStorage.removeItem(`crowdcut-camera-${sessionId}`);
     }
     // Scene control and Burst capture deliberately use separate subscriptions.
     // This subscription can only update the live production scene.
@@ -759,11 +842,23 @@ export default function ManyVueApp() {
         clientSequence: sequenceRef.current,
         connectionState: navigator.onLine ? "online" : "offline",
       });
-    }, 5_000);
+    }, PRESENCE_HEARTBEAT_MS);
   }, []);
 
   const registerRoomListeners = useCallback(async (room: LiveRoom, role: "program" | "camera") => {
     const livekit = await import("livekit-client");
+    room.on(livekit.RoomEvent.Reconnecting, () => {
+      setTransport("connecting");
+      setTransportMessage("Reconnecting this camera without interrupting the local recording…");
+    });
+    room.on(livekit.RoomEvent.Reconnected, () => {
+      setTransport("live");
+      setTransportMessage("Reconnected to the live camera crew");
+    });
+    room.on(livekit.RoomEvent.Disconnected, () => {
+      setTransport("error");
+      setTransportMessage("The live link disconnected. Your local recording remains safe; reconnecting when the network returns.");
+    });
     room.on(livekit.RoomEvent.DataReceived, (payload: Uint8Array) => {
       try { applyMessage(JSON.parse(decoder.decode(payload)) as WireMessage); } catch { /* invalid packets are ignored */ }
     });
@@ -799,16 +894,37 @@ export default function ManyVueApp() {
       setFeeds((current) => current.filter((feed) => feed.id !== participant.identity));
       setCameraFocusedFeedId((current) => current === participant.identity ? "" : current);
     });
+    room.on(livekit.RoomEvent.ParticipantNameChanged, (name, participant) => {
+      setFeeds((current) => current.map((feed) => {
+        if (feed.id !== participant.identity) return feed;
+        const angle = inferStageAngle(participant.identity, name);
+        return { ...feed, angle, label: shortCameraLabel(participant.identity, name, angle) };
+      }));
+    });
   }, [applyMessage]);
 
-  const connectTransport = useCallback(async (role: "program" | "camera", stream?: MediaStream, identityOverride?: string) => {
-    if (!participantId || roomRef.current?.state === "connected") return roomRef.current;
+  const connectTransport = useCallback(async (
+    role: "program" | "camera",
+    stream?: MediaStream,
+    cameraAuthority?: { id: string; capability: string },
+  ) => {
+    const authorizedParticipantId = cameraAuthority?.id || participantId;
+    const authorizedParticipantCapability = cameraAuthority?.capability || participantCapability;
+    if (!authorizedParticipantId || !authorizedParticipantCapability || roomRef.current?.state === "connected") return roomRef.current;
     setTransport("connecting");
     setTransportMessage("Connecting the crowd…");
     try {
-      const response = await fetch(
-        `/api/livekit-token?session=${encodeURIComponent(sessionId)}&participant=${encodeURIComponent(identityOverride || participantId)}&role=${role}&name=${encodeURIComponent(participantName)}`,
-      );
+      const response = await fetch("/api/livekit-token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          role,
+          sessionSlug: sessionId,
+          participantId: authorizedParticipantId,
+          participantCapability: authorizedParticipantCapability,
+          ...(role === "program" ? { sessionId: convexSessionId, hostCapability } : {}),
+        }),
+      });
       const token = await response.json() as { configured?: boolean; token?: string; url?: string; error?: string };
       if (!response.ok || !token.token || !token.url) {
         setTransport("rehearsal");
@@ -848,7 +964,7 @@ export default function ManyVueApp() {
       setTransportMessage(error instanceof Error ? error.message : "Could not connect to the live room.");
       return null;
     }
-  }, [participantId, participantName, registerRoomListeners, sessionId]);
+  }, [convexSessionId, hostCapability, participantCapability, participantId, registerRoomListeners, sessionId]);
 
   const buildArtifact = useCallback(async (burstOverride?: { id: string; at: number; count: number }) => {
     const targetBurst = burstOverride ?? ownedBurst;
@@ -867,7 +983,11 @@ export default function ManyVueApp() {
       if (!renderId) {
         let candidates = [] as ReturnType<typeof burstEditCandidates>;
         for (let attempt = 0; attempt < 20; attempt += 1) {
-          const assets = await listBurstAssets(sessionId, targetBurst.id);
+          const assets = await listBurstAssets(sessionId, targetBurst.id, {
+            role: "participant",
+            participantId,
+            participantCapability,
+          });
           candidates = burstEditCandidates(assets, participantId);
           if (candidates.length >= 2 && candidates.some((candidate) => candidate.cameraId === participantId)) break;
           await wait(1_200);
@@ -944,7 +1064,7 @@ export default function ManyVueApp() {
       setArtifactMessage(error instanceof Error ? error.message : "The cinematic render failed; your original remains safe.");
       renderIdRef.current = "";
     }
-  }, [ownedBurst, participantId, sessionId]);
+  }, [ownedBurst, participantCapability, participantId, sessionId]);
 
   const promoteCapturedBurst = useCallback(async (
     marker: { id: string; at: number; count: number },
@@ -1014,6 +1134,7 @@ export default function ManyVueApp() {
       const uploaded = await uploadBurstCaptureAssets({
         session: sessionId,
         participant: participantId,
+        participantCapability,
         burstId: sharedId,
         clip: capture.blob,
         thumbnail: sheet.ok ? sheet.blob : null,
@@ -1085,8 +1206,12 @@ export default function ManyVueApp() {
     if (cameraOpeningRef.current || recording) return;
     cameraOpeningRef.current = true;
     setCameraOpening(true);
-    setTransportMessage("Opening your angle…");
+    setCameraPermissionState("requesting");
+    setTransportMessage("Requesting camera once — Allow immediately joins the live film…");
     try {
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera access requires a current browser on a secure HTTPS page.");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
@@ -1106,6 +1231,8 @@ export default function ManyVueApp() {
       }
       videoTrack.enabled = true;
       videoTrack.contentHint = "motion";
+      setCameraPermissionState("granted");
+      window.localStorage.setItem("manyvue-camera-permission", "granted");
       setCameraStream(stream);
       cameraStreamRef.current = stream;
       if (previewRef.current) {
@@ -1115,11 +1242,17 @@ export default function ManyVueApp() {
       const convexCamera = await ensureConvexCamera();
       // Attach WebRTC before any local encoder starts. This prevents mobile
       // WebKit from publishing an encoder-starved black camera track.
-      await connectTransport("camera", stream, convexCamera.livekitIdentity);
+      await connectTransport("camera", stream, {
+        id: convexCamera.id,
+        capability: convexCamera.capability,
+      });
       const startedAt = Date.now();
       recordingStartedRef.current = startedAt;
 
-      const recorder = new DurableMediaRecorder(stream, {
+      const recorderLease = await createRecorderStreamLease(stream, needsSingleRecorderPipeline());
+      recorderStreamReleaseRef.current = recorderLease.release;
+
+      const recorder = new DurableMediaRecorder(recorderLease.stream, {
         recordingId: crypto.randomUUID(),
         participantId: convexCamera.id,
         chunkDurationMs: 1000,
@@ -1129,7 +1262,7 @@ export default function ManyVueApp() {
       await recorder.start();
       const rollingBurst: BurstRecorder = needsSingleRecorderPipeline()
         ? new SingleRecorderBurstBuffer(recorder, startedAt)
-        : new RollingBurstRecorder(stream, {
+        : new RollingBurstRecorder(recorderLease.stream, {
             participantId: convexCamera.id,
             onError: (error) => setArtifactMessage(`Rolling Burst buffer: ${error.message}`),
           });
@@ -1156,18 +1289,45 @@ export default function ManyVueApp() {
       recorderRef.current = null;
       await rollingBurstRef.current?.stop().catch(() => undefined);
       rollingBurstRef.current = null;
+      recorderStreamReleaseRef.current?.();
+      recorderStreamReleaseRef.current = null;
       cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
       setCameraStream(null);
       setRecording(false);
       setBurstBufferReady(false);
       setTransport("error");
-      setTransportMessage(error instanceof Error ? error.message : "Camera permission was not granted.");
+      const blocked = error instanceof DOMException && (
+        error.name === "NotAllowedError" || error.name === "SecurityError"
+      );
+      setCameraPermissionState(blocked ? "blocked" : "error");
+      setTransportMessage(blocked
+        ? "Camera access is blocked. Enable Camera for this site, then tap Join Camera."
+        : error instanceof Error ? error.message : "The camera could not join the live film.");
     } finally {
       cameraOpeningRef.current = false;
       setCameraOpening(false);
     }
   }, [activateRecordingParticipant, connectTransport, ensureConvexCamera, recording]);
+
+  // A QR scan should have one permission decision, not a permission prompt
+  // followed by a second artificial "start" step. getUserMedia resolves the
+  // same promise after Allow, and the device immediately publishes, records,
+  // and primes Burst capture. Returning cameras follow the same path without
+  // another application-level confirmation when the browser retained access.
+  useEffect(() => {
+    if (
+      view !== "camera" ||
+      !booted ||
+      recording ||
+      clipUrl ||
+      cameraOpeningRef.current ||
+      cameraAutoStartAttemptedRef.current
+    ) return;
+    cameraAutoStartAttemptedRef.current = true;
+    const timer = window.setTimeout(() => void startCamera(), 0);
+    return () => window.clearTimeout(timer);
+  }, [booted, clipUrl, recording, startCamera, view]);
 
   const stopCamera = useCallback(async () => {
     const recorder = recorderRef.current;
@@ -1184,6 +1344,8 @@ export default function ManyVueApp() {
     });
     rollingBurstRef.current = null;
     recorderRef.current = null;
+    recorderStreamReleaseRef.current?.();
+    recorderStreamReleaseRef.current = null;
     setRecording(false);
     setBurstBufferReady(false);
     setSelectedLive(false);
@@ -1644,6 +1806,7 @@ export default function ManyVueApp() {
   useEffect(() => () => {
     roomRef.current?.disconnect();
     void rollingBurstRef.current?.stop();
+    recorderStreamReleaseRef.current?.();
     cameraStream?.getTracks().forEach((track) => track.stop());
     if (clipUrl) URL.revokeObjectURL(clipUrl);
   }, [cameraStream, clipUrl]);
@@ -1796,9 +1959,9 @@ export default function ManyVueApp() {
 
         {!recording && !clipUrl && (
           <section className="camera-intro">
-            <p className="eyebrow">YOU ARE THE CAMERA</p>
-            <h1>Record your angle.<br /><em>Take home the crowd.</em></h1>
-            <p>Your mic is saved with your personal recording but is never broadcast into the room, so the live screen cannot create phone-speaker feedback.</p>
+            <p className="eyebrow">ONE PERMISSION · IMMEDIATE LIVE ANGLE</p>
+            <h1>{cameraPermissionState === "blocked" ? "Camera access is blocked." : "Allow once.\n"}<em>{cameraPermissionState === "blocked" ? "Rejoin instantly." : "You are in."}</em></h1>
+            <p>After Camera permission is allowed, ManyVue immediately records and publishes your angle—there is no second start step. Your mic stays only in your personal recording and is never mixed into the room.</p>
             <div className="stage-angle-picker" role="group" aria-label="Choose your position relative to the stage">
               <div>
                 <b>WHERE ARE YOU?</b>
@@ -1820,9 +1983,16 @@ export default function ManyVueApp() {
               </div>
               <small>The director uses this to cut between genuinely different views.</small>
             </div>
-            <button className="record-trigger" onClick={startCamera} disabled={cameraOpening}>
-              <span aria-hidden="true" /> {cameraOpening ? "PRIMING 3-SECOND PRE-ROLL…" : `START MY ${cameraAngle} ANGLE`}
-            </button>
+            {(cameraPermissionState === "blocked" || cameraPermissionState === "error") ? (
+              <button className="record-trigger" onClick={startCamera} disabled={cameraOpening}>
+                <span aria-hidden="true" /> {cameraOpening ? "RECONNECTING…" : "JOIN CAMERA"}
+              </button>
+            ) : (
+              <div className="camera-auto-join" role="status" aria-live="polite">
+                <i aria-hidden="true" />
+                <div><b>{cameraPermissionState === "granted" ? "PERMISSION GRANTED" : "ALLOW CAMERA TO JOIN"}</b><span>Camera → live angle → rolling Burst buffer, automatically</span></div>
+              </div>
+            )}
             {transportMessage && <p className="inline-message">{transportMessage}</p>}
           </section>
         )}
@@ -1830,6 +2000,11 @@ export default function ManyVueApp() {
         {recording && (
           <section className="camera-controls">
             <div className="recording-readout"><i /> {cameraAngle} ANGLE · VIDEO LIVE · MIC LOCAL <b>{String(elapsed).padStart(2, "0")}s</b></div>
+            <div className="recording-angle-picker" role="group" aria-label="Update your position relative to the stage">
+              {STAGE_ANGLES.map((angle) => (
+                <button key={angle} type="button" className={cameraAngle === angle ? "selected" : ""} onClick={() => chooseCameraAngle(angle)}>{angle}</button>
+              ))}
+            </div>
             <button className={`burst-trigger ${ownedBurst ? "caught" : ""}`} onClick={triggerBurst} disabled={burstPending || !burstBufferReady}>
               <span className="burst-rings" aria-hidden="true"><i /><i /></span>
               <b>{!burstBufferReady ? "CHARGING 3-SECOND PRE-ROLL…" : burstPending ? "SAVING T−3 → T+3…" : ownedBurst ? "BURST SAVED · TAP FOR ANOTHER" : "BURST THIS MOMENT"}</b>
@@ -1856,7 +2031,7 @@ export default function ManyVueApp() {
             </div>
             <video src={artifactUrl || clipUrl} controls playsInline />
             <div className="artifact-actions">
-              <a href={artifactUrl || clipUrl} download={artifactUrl ? "my-crowdcut.mp4" : "my-angle.webm"}>{artifactUrl ? "DOWNLOAD CROWD CUT" : "DOWNLOAD MY ANGLE"}</a>
+              <a href={artifactUrl || clipUrl} download={artifactUrl ? "my-manyvue.mp4" : "my-angle.webm"}>{artifactUrl ? "DOWNLOAD MANYVUE" : "DOWNLOAD MY ANGLE"}</a>
               {ownedBurst && !artifactUrl && (["waiting", "failed", "rendering"] as ArtifactPhase[]).includes(artifactPhase) && (
                 <button onClick={() => void buildArtifact()}>
                   {artifactPhase === "rendering" ? "CHECK RENDER" : artifactPhase === "waiting" ? "RETRY MULTI-ANGLE BUILD" : "BUILD FROM REAL ANGLES"}
@@ -1881,6 +2056,7 @@ export default function ManyVueApp() {
           open={burstLibraryOpen}
           sessionId={sessionId}
           ownerParticipantId={participantId}
+          participantCapability={participantCapability}
           bursts={burstHistory}
           onClose={() => setBurstLibraryOpen(false)}
         />
@@ -1950,7 +2126,7 @@ export default function ManyVueApp() {
           className={`mobile-wall-toggle ${mobileWallOpen ? "is-open" : ""}`}
           onClick={() => setMobileWallOpen((current) => !current)}
           aria-expanded={mobileWallOpen}
-          aria-controls="crowdcut-camera-wall"
+          aria-controls="manyvue-camera-wall"
         >
           <span>{mobileWallOpen ? "BACK TO FILM" : "CAMERAS"}</span>
           <b>{feeds.length}</b>
@@ -1970,7 +2146,7 @@ export default function ManyVueApp() {
           )}
           <button className="join-qr" onClick={() => setJoinExpanded(true)} aria-label={joinExpanded ? "Camera join QR code" : "Enlarge camera join QR code"}>
             {qr
-              ? <img src={qr} alt="Scan to join ManyVue as a camera" />
+              ? <Image src={qr} alt="Scan to join ManyVue as a camera" width={960} height={960} unoptimized priority />
               : <span className="qr-loading">CREATING<br />LIVE ROOM…</span>}
           </button>
           <div className="join-details">
@@ -1989,7 +2165,7 @@ export default function ManyVueApp() {
         </aside>
 
         <aside
-          id="crowdcut-camera-wall"
+          id="manyvue-camera-wall"
           className={`multiview-rail ${mobileWallOpen ? "mobile-open" : "mobile-closed"}`}
           aria-label="Live camera multiview"
         >
@@ -2121,6 +2297,9 @@ export default function ManyVueApp() {
         open={burstLibraryOpen}
         sessionId={sessionId}
         ownerParticipantId={participantId}
+        participantCapability={participantCapability}
+        convexSessionId={convexSessionId}
+        hostCapability={hostCapability}
         bursts={burstHistory}
         programView
         onClose={() => setBurstLibraryOpen(false)}

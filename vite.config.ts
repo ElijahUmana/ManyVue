@@ -14,13 +14,11 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   // Keep local Miniflare and the hosted Worker on the same supported runtime.
-  // The build's vinext server bundle uses the Node compatibility shims supplied
-  // by the hosting pipeline.
-  // Sites' Worker runtime made Node compatibility the default on 2026-08-04.
-  // Pinning that date and declaring only the explicit ALS surface prevents the
-  // publisher from injecting the now-redundant nodejs_compat flag.
+  // vinext metadata routes and the server-to-server Convex authorization
+  // client use Node-compatible modules, so declare that requirement instead
+  // of relying on an implicit hosting default.
   compatibility_date: "2026-08-04",
-  compatibility_flags: ["nodejs_als"],
+  compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [
         {

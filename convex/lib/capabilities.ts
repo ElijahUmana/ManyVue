@@ -56,11 +56,12 @@ export async function assertParticipant(
 
 export function publicParticipant(participant: Doc<"participants">) {
   const { capabilityHash: _capabilityHash, ...safe } = participant;
+  void _capabilityHash;
   return safe;
 }
 
 export function publicSession(session: Doc<"sessions">) {
   const { hostCapabilityHash: _hostCapabilityHash, ...safe } = session;
+  void _hostCapabilityHash;
   return safe;
 }
-

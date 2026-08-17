@@ -137,7 +137,7 @@ export async function directLiveCameras(cameras: LiveDirectorCamera[], env: Live
           { role: "system", content: "You are ManyVue's live concert vision director. Make a truthful production decision from the supplied frames only. Never invent camera positions or subjects." },
           { role: "user", content },
         ],
-        text: { verbosity: "low", format: { type: "json_schema", name: "crowdcut_live_director", strict: true, schema: DECISION_SCHEMA } },
+        text: { verbosity: "low", format: { type: "json_schema", name: "manyvue_live_director", strict: true, schema: DECISION_SCHEMA } },
       }),
     });
     if (!response.ok) return { state: "deterministic", provider: "deterministic", model, decision: fallback, reason: `OpenAI returned ${response.status}.` };

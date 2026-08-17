@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { action, internalMutation, mutation, query } from "./_generated/server";
 import {
+  assertParticipant,
   assertHost,
   createCapabilityToken,
   createSessionSlug,
@@ -80,6 +81,32 @@ export const bySlug = query({
   handler: async (ctx, { slug }) => publicSession(await requireSessionBySlug(ctx, slug)),
 });
 
+/** Capability-bound authorization for the Program View's media identity. */
+export const authorizeProgramMedia = query({
+  args: {
+    sessionId: v.id("sessions"),
+    hostCapability: v.string(),
+    participantId: v.id("participants"),
+    participantCapability: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await assertHost(ctx, args.sessionId, args.hostCapability);
+    const participant = await assertParticipant(ctx, args.participantId, args.participantCapability);
+    if (participant.sessionId !== session._id || participant.role !== "presenter") {
+      throw new ConvexError({ code: "MEDIA_FORBIDDEN", message: "Program identity does not belong to this session." });
+    }
+    if (session.status === "ended") {
+      throw new ConvexError({ code: "SESSION_CLOSED", message: "This production has ended." });
+    }
+    return {
+      room: session.slug,
+      identity: participant.livekitIdentity,
+      displayName: participant.displayName ?? "Program",
+      role: participant.role,
+    };
+  },
+});
+
 export const setJoinEnabled = mutation({
   args: {
     sessionId: v.id("sessions"),
@@ -138,4 +165,3 @@ export const endLive = mutation({
     return { endedAt };
   },
 });
-

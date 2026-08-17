@@ -183,6 +183,8 @@ button { cursor: pointer; }
     grid-column: 1;
     grid-row: 1;
     background-image: linear-gradient(180deg,transparent 62%,#020205 100%), url("/og.png");
+    background-size: 100% 100%, 180% auto;
+    background-position: center, right center;
   }
   .manyvue-hero-copy {
     grid-column: 1;
@@ -310,11 +312,7 @@ button { cursor: pointer; }
 .brand-mark { display: flex; align-items: center; gap: 9px; font-weight: 950; letter-spacing: -.055em; font-size: 22px; }
 .brand-mark > span:nth-child(2) span { color: var(--acid); }
 .brand-mark > b { background: var(--pink); border-radius: 4px; padding: 4px 6px 3px; font-family: var(--font-mono), monospace; font-size: 9px; letter-spacing: .08em; }
-.brand-orbit { width: 29px; height: 29px; border: 2px solid var(--acid); border-radius: 50%; position: relative; display: block; }
-.brand-orbit i { position: absolute; width: 6px; height: 6px; background: var(--acid); border-radius: 50%; }
-.brand-orbit i:nth-child(1) { left: -4px; top: 10px; }
-.brand-orbit i:nth-child(2) { right: 1px; top: -3px; }
-.brand-orbit i:nth-child(3) { right: 0; bottom: 0; background: var(--pink); }
+.brand-app-icon { width: 31px; height: 31px; flex: 0 0 31px; border-radius: 7px; object-fit: cover; }
 
 .status-pill { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); background: rgba(5,5,9,.62); backdrop-filter: blur(14px); border-radius: 999px; font-family: var(--font-mono), monospace; font-size: 9px; font-weight: 850; letter-spacing: .09em; }
 .status-pill i { width: 7px; height: 7px; border-radius: 50%; background: #999; }
@@ -367,7 +365,7 @@ button { cursor: pointer; }
 .camera-aurora { position: absolute; width: 80vw; height: 80vw; max-width: 540px; max-height: 540px; left: 50%; top: 37%; transform: translate(-50%, -50%); background: conic-gradient(from 120deg, var(--pink), var(--violet), var(--cyan), var(--acid), var(--pink)); filter: blur(70px); opacity: .28; animation: rotate 11s linear infinite; }
 .camera-topbar { position: relative; z-index: 8; display: flex; align-items: center; justify-content: space-between; padding: max(22px, env(safe-area-inset-top)) 20px 0; }
 .camera-topbar .brand-mark { font-size: 17px; }
-.camera-topbar .brand-orbit { width: 24px; height: 24px; }
+.camera-topbar .brand-app-icon { width: 26px; height: 26px; flex-basis: 26px; }
 .camera-intro { position: absolute; z-index: 8; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); width: min(620px, calc(100vw - 36px)); max-height: calc(100svh - max(92px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom))); transform: translateX(-50%); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .camera-intro .eyebrow { color: var(--acid); }
 .camera-intro h1 { margin: 12px 0 12px; max-width: 560px; font-size: clamp(42px, 12vw, 72px); line-height: .89; letter-spacing: -.075em; font-weight: 950; text-transform: uppercase; }
@@ -387,11 +385,20 @@ button { cursor: pointer; }
 .stage-angle-picker small { display: block; margin: 9px 2px 0; color: rgba(255,255,255,.48); font-size: 9px; line-height: 1.35; }
 .record-trigger { width: 100%; min-height: 68px; border: 0; border-radius: 16px; background: var(--acid); color: #08080a; font-size: 16px; font-weight: 950; letter-spacing: -.02em; box-shadow: 0 16px 50px rgba(245,255,66,.24); }
 .record-trigger span { display: inline-block; width: 14px; height: 14px; margin-right: 10px; border: 3px solid currentColor; border-radius: 50%; vertical-align: -2px; }
+.camera-auto-join { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 68px; padding: 13px 18px; border: 1px solid rgba(245,255,66,.52); border-radius: 16px; background: rgba(5,5,9,.78); box-shadow: 0 16px 50px rgba(0,0,0,.35), inset 0 0 30px rgba(245,255,66,.06); backdrop-filter: blur(18px); }
+.camera-auto-join > i { flex: 0 0 18px; width: 18px; height: 18px; border: 3px solid rgba(245,255,66,.25); border-top-color: var(--acid); border-radius: 50%; animation: cameraJoinSpin .85s linear infinite; }
+.camera-auto-join div { display: grid; gap: 3px; min-width: 0; }
+.camera-auto-join b { color: var(--acid); font-family: var(--font-mono), monospace; font-size: 12px; letter-spacing: .09em; }
+.camera-auto-join span { color: rgba(255,255,255,.7); font-size: 11px; line-height: 1.3; }
+@keyframes cameraJoinSpin { to { transform: rotate(360deg); } }
 .inline-message { margin: 12px 4px 0; color: rgba(255,255,255,.63); font-family: var(--font-mono), monospace; font-size: 10px; line-height: 1.4; }
 .camera-controls { position: absolute; z-index: 9; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); width: min(640px, calc(100vw - 36px)); transform: translateX(-50%); display: grid; gap: 10px; }
 .recording-readout { justify-self: center; display: flex; gap: 8px; align-items: center; padding: 7px 11px; border-radius: 999px; background: rgba(5,5,9,.7); backdrop-filter: blur(12px); font-family: var(--font-mono), monospace; font-size: 9px; letter-spacing: .1em; }
 .recording-readout i { width: 7px; height: 7px; background: var(--pink); border-radius: 50%; animation: pulse 1s infinite; }
 .recording-readout b { color: rgba(255,255,255,.55); margin-left: 6px; }
+.recording-angle-picker { justify-self: center; display: flex; gap: 4px; padding: 4px; border: 1px solid rgba(255,255,255,.13); border-radius: 999px; background: rgba(5,5,9,.68); backdrop-filter: blur(14px); }
+.recording-angle-picker button { min-width: 64px; min-height: 30px; border: 0; border-radius: 999px; background: transparent; color: rgba(255,255,255,.58); font-family: var(--font-mono), monospace; font-size: 8px; font-weight: 900; letter-spacing: .08em; }
+.recording-angle-picker button.selected { background: var(--acid); color: var(--ink); }
 .burst-trigger { min-height: 112px; position: relative; overflow: hidden; border-radius: 20px; border: 1px solid rgba(245,255,66,.55); background: rgba(9,9,14,.73); color: white; backdrop-filter: blur(20px); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 20px 20px 20px 90px; text-align: left; }
 .burst-trigger b { font-size: 18px; letter-spacing: -.03em; }
 .burst-trigger small { color: rgba(255,255,255,.6); margin-top: 5px; }
@@ -716,7 +723,7 @@ button { cursor: pointer; }
   .feed-label { left: max(8px,env(safe-area-inset-left)); bottom: max(78px,calc(env(safe-area-inset-bottom) + 68px)); padding: 5px 7px; font-size: 7px; }
   .program-topbar { padding: max(13px,calc(env(safe-area-inset-top) + 7px)) max(12px,calc(env(safe-area-inset-right) + 7px)) 13px max(12px,calc(env(safe-area-inset-left) + 7px)); }
   .program-topbar .brand-mark { gap: 6px; font-size: 14px; }
-  .program-topbar .brand-orbit { width: 22px; height: 22px; }
+  .program-topbar .brand-app-icon { width: 23px; height: 23px; flex-basis: 23px; }
   .program-status { gap: 6px; }
   .program-status > span:last-child,.director-mode-badge { display: none; }
   .status-pill { padding: 6px 8px; font-size: 7px; }
@@ -743,8 +750,10 @@ button { cursor: pointer; }
   .stage-angle-picker > div:first-child span { font-size: 8px; }
   .stage-angle-options button { min-height: 44px; font-size: 8px; }
   .record-trigger { min-height: 58px; font-size: 13px; }
+  .camera-auto-join { min-height: 58px; }
   .camera-controls { width: calc(100vw - 24px); bottom: max(9px,env(safe-area-inset-bottom)); gap: 7px; }
   .recording-readout { max-width: 100%; font-size: 7px; letter-spacing: .06em; }
+  .recording-angle-picker button { min-width: 55px; min-height: 27px; }
   .burst-trigger { min-height: 94px; padding: 13px 13px 13px 74px; border-radius: 16px; }
   .burst-trigger b { font-size: 14px; }
   .burst-trigger small { font-size: 9px; }
@@ -833,7 +842,7 @@ button { cursor: pointer; }
 @media (max-height: 520px) and (orientation: landscape) {
   .camera-topbar { padding: max(8px,env(safe-area-inset-top)) 10px 0; }
   .camera-topbar .brand-mark { font-size: 13px; }
-  .camera-topbar .brand-orbit { width: 21px; height: 21px; }
+  .camera-topbar .brand-app-icon { width: 22px; height: 22px; flex-basis: 22px; }
   .camera-view-toggle { top: max(8px,env(safe-area-inset-top)); right: 10px; left: auto; width: min(370px,55vw); transform: none; }
   .camera-view-toggle button { min-height: 34px; font-size: 7px; }
   .camera-intro { top: 56px; bottom: 8px; width: calc(100vw - 24px); max-height: none; display: grid; grid-template-columns: minmax(0,1fr) minmax(300px,.95fr); grid-template-rows: auto 1fr auto; gap: 6px 20px; align-items: end; overflow: hidden; }
@@ -842,12 +851,14 @@ button { cursor: pointer; }
   .camera-intro > p:not(.eyebrow):not(.inline-message) { display: none; }
   .camera-intro .stage-angle-picker { grid-column: 2; grid-row: 1 / 3; align-self: end; margin: 0; padding: 8px; }
   .camera-intro .record-trigger { grid-column: 2; grid-row: 3; min-height: 48px; }
+  .camera-intro .camera-auto-join { grid-column: 2; grid-row: 3; min-height: 48px; }
   .camera-intro .inline-message { position: absolute; left: 0; bottom: 0; max-width: calc(50% - 12px); margin: 0; }
   .stage-angle-picker > div:first-child { margin-bottom: 6px; }
   .stage-angle-options button { min-height: 36px; }
   .stage-angle-picker small { display: none; }
   .camera-controls { right: 10px; left: auto; bottom: 8px; width: min(430px,52vw); transform: none; gap: 5px; }
   .recording-readout { padding: 5px 8px; font-size: 7px; }
+  .recording-angle-picker { display: none; }
   .burst-trigger { min-height: 72px; padding: 9px 10px 9px 62px; }
   .burst-trigger b { font-size: 13px; }
   .burst-trigger small { margin-top: 2px; font-size: 8px; }

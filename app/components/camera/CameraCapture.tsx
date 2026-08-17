@@ -489,7 +489,7 @@ export function CameraCapture({
           <a
             className={styles.downloadLink}
             href={downloadUrl}
-            download={`crowdcut-${cameraId}.webm`}
+            download={`manyvue-${cameraId}.webm`}
           >
             SAVE MY ORIGINAL
           </a>

@@ -1,10 +1,10 @@
-# CrowdCut Live — Canonical Build Plan
+# ManyVue Live — Canonical Build Plan
 
 This is the source of truth for every implementation and review agent. Do not silently reduce scope, fake media, simulate participants, or claim integrations that are not wired and verified.
 
 ## Product lock
 
-**One sentence:** CrowdCut Live turns the phones already recording a concert moment into one AI-directed camera crew: every fan keeps their original clip, sees when their angle enters the live production, taps Burst on the exact moment they want to preserve, and receives a cinematic multi-perspective film made from the real crowd around them.
+**One sentence:** ManyVue Live turns the phones already recording a concert moment into one AI-directed camera crew: every fan keeps their original clip, sees when their angle enters the live production, taps Burst on the exact moment they want to preserve, and receives a cinematic multi-perspective film made from the real crowd around them.
 
 **Attendee promise:** Record your angle. See it go live. Take home the crowd.
 
@@ -48,7 +48,7 @@ This is the source of truth for every implementation and review agent. Do not si
 - The triggering phone shows `CROWD BURST CAUGHT` and the live screen produces a rapid, full-screen, real-perspective preview as contributions arrive.
 - Claims are truthful: same musical cue from different positions, not guaranteed identical frames or invented 3D motion.
 
-### 4. My CrowdCut
+### 4. My ManyVue
 
 - Primary shareable artifact is an 8–12 second vertical MP4 centered on the attendee's selected Burst.
 - Opens on the owner's angle, moves through complementary real views, includes the Burst sweep and selected-live moment, and returns to the owner.
@@ -99,7 +99,7 @@ This is the source of truth for every implementation and review agent. Do not si
 ## Festival Now bonus
 
 - JamBase supplies real festival, artist, stage, and set identity.
-- Active stages show a muted low-bandwidth living CrowdCut window and `LIVE · N ANGLES`.
+- Active stages show a muted low-bandwidth living ManyVue window and `LIVE · N ANGLES`.
 - No fake attendance estimate, generic heatmap, or continuous GPS requirement.
 - Stage QR/session identity is primary; optional coarse location may only assist stage selection.
 

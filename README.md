@@ -18,8 +18,6 @@
   <a href="#run-locally">Run locally</a>
   ·
   <a href="docs/ARCHITECTURE_DEMO_SCRIPT.md">15-second architecture script</a>
-  ·
-  <a href="output/pdf/ManyVue_Next_Steps.pdf">Festival roadmap</a>
 </p>
 
 ManyVue turns the phones already recording a concert into one synchronized camera crew. Fans keep their own original recording, watch their perspective enter a shared live production, capture a musical instant across every active phone, and receive a personal multi-angle film made from the real crowd around them.
@@ -29,7 +27,7 @@ Built for the **OutsideLLMs / Outside Lands** fan-experience challenge, with **C
 ## The product in one minute
 
 1. The presenter opens the Program View and starts a live film.
-2. Fans scan one QR code—no account or app install—and tap **Start My Angle**.
+2. Fans scan one QR code—no account or app install. The browser asks for Camera once; tapping **Allow** immediately publishes, records, and primes Burst capture without a second start action.
 3. Every fan gets **Live Cuts**: a private realtime gallery of every connected angle. They can open any view full screen and return to **My Angle** without changing the shared production.
 4. On the Program View, clicking a camera immediately shows it live. A separate **+ Multiview** control builds deliberate 2–5 angle compositions without conflating browsing and directing.
 5. When a phone appears in the shared film, that exact participant sees **Your Angle Is Live** and can feel a haptic confirmation.
@@ -40,9 +38,11 @@ This is not a heatmap, a wall of surveillance feeds, or a generic video-upload e
 
 ## Four connected experiences
 
-### 1. Start My Angle
+### 1. Allow once; become an angle
 
-The camera opens directly from the QR link. A fan declares whether they are left, center, or right of the stage, then starts recording. Their full-resolution original remains on their device while a live video track enters the room.
+The camera opens directly from the QR link. ManyVue requests Camera once; the same permission promise continues directly into transport authorization, live publication, durable local recording, and rolling Burst priming. If the browser retained the grant, a returning phone rejoins automatically. If the user or OS revoked it, the interface fails visibly and offers one explicit **Join Camera** recovery action—it never pretends access exists.
+
+Each phone starts with a deterministic left/center/right position and can correct it while recording. The update reaches both Convex shot metadata and the live participant label, so stage-aware direction keeps using the attendee's real position. Their original remains on the device while an independent live video track enters the room.
 
 While recording, **Live Cuts** shows every connected phone as a realtime visual gallery. Opening an angle is private to that attendee: it never changes the Program View, sends a director command, or interrupts their recording. **My Angle** returns directly to their own camera.
 
@@ -59,7 +59,7 @@ The camera selected by the room and the phone receiving the live confirmation ar
 
 ### 3. Crowd Burst
 
-The presenter or any recording attendee can tap a Burst immediately—there is no room-wide countdown. From the instant **Start My Angle** begins, each phone continuously maintains overlapping, independently playable low-bitrate recordings. Convex snapshots the eligible camera set at tap time and reactively fans out one shared anchor.
+The presenter or any recording attendee can tap a Burst immediately—there is no room-wide countdown. From the instant Camera permission resolves, each phone continuously maintains overlapping, independently playable low-bitrate recordings. Convex snapshots the eligible camera set at tap time and reactively fans out one shared anchor.
 
 Every eligible phone silently:
 
@@ -135,6 +135,7 @@ flowchart TB
     Bursts["Burst clustering + expected camera snapshot<br/>markers + deadlines + acknowledgements"]
     Capture["activeCaptureAnchor protected query<br/>private timing signal per expected camera"]
     Assets["Asset ownership + contribution readiness<br/>idempotent external upload registration"]
+    Auth["Media authorization queries<br/>participant + host capability verification"]
     Cron["Presence expiry cron<br/>removes stale cameras safely"]
 
     Sessions --> Presence
@@ -142,16 +143,21 @@ flowchart TB
     Director --> Reactive
     Bursts --> Capture
     Assets --> Bursts
+    Sessions --> Auth
+    Presence --> Auth
+    Bursts --> Auth
     Cron --> Presence
   end
 
   subgraph Media["Live media plane"]
+    Token["Capability-gated token issuer<br/>2-hour room-scoped credentials"]
     Transport["Realtime media transport<br/>encrypted video tracks only"]
-    Local["Browser MediaRecorder + IndexedDB<br/>durable personal original"]
+    Local["Browser MediaRecorder + IndexedDB<br/>durable original + encoder-isolated iPhone relay"]
   end
 
   subgraph Artifact["Personal artifact plane"]
-    R2["ChatGPT Sites / Cloudflare R2<br/>small real Burst sources"]
+    Gateway["Capability-gated media gateway<br/>bounded uploads + expiring HMAC URLs"]
+    R2["ChatGPT Sites / Cloudflare R2<br/>private real Burst sources"]
     OpenAI["OpenAI<br/>live shot choice + structured edit recipe"]
     Shotstack["Shotstack production renderer<br/>vertical MP4"]
     Download["Personal downloadable ManyVue"]
@@ -169,6 +175,11 @@ flowchart TB
   Capture -- "silent T−3 → T+3 capture cue" --> PhoneB
   Capture -- "silent T−3 → T+3 capture cue" --> Program
 
+  PhoneA -- "participant capability" --> Token
+  PhoneB -- "participant capability" --> Token
+  Program -- "host + participant capabilities" --> Token
+  Token -- "server-to-server authorization" --> Auth
+  Token -- "scoped credential" --> Transport
   PhoneA -- "encrypted live video" --> Transport
   PhoneB -- "encrypted live video" --> Transport
   PhoneN -- "encrypted live video" --> Transport
@@ -176,9 +187,11 @@ flowchart TB
   PhoneA --> Local
   PhoneB --> Local
 
-  PhoneA -- "Burst microclip" --> R2
-  PhoneB -- "Burst microclip" --> R2
-  R2 -- "HTTPS source URLs" --> Assets
+  PhoneA -- "capability + bounded Burst microclip" --> Gateway
+  PhoneB -- "capability + bounded Burst microclip" --> Gateway
+  Gateway -- "server-to-server authorization" --> Auth
+  Gateway --> R2
+  R2 -- "expiring signed source URLs" --> Assets
   Program -- "current contact frames" --> OpenAI
   R2 --> OpenAI
   OpenAI -- "validated recipe" --> Shotstack
@@ -186,7 +199,7 @@ flowchart TB
   Shotstack --> Download
 
   classDef convex fill:#eaff2f,color:#090909,stroke:#ffffff,stroke-width:2px;
-  class Sessions,Presence,Director,Reactive,Bursts,Capture,Assets,Cron convex;
+  class Sessions,Presence,Director,Reactive,Bursts,Capture,Assets,Auth,Cron convex;
 ```
 
 ### What Convex visibly controls
@@ -195,7 +208,8 @@ flowchart TB
 | --- | --- | --- |
 | Session lifecycle | `sessions.create`, `startLive`, `endLive` | One QR opens the correct live production; late joins do not restart it; **Stop Film** ends the session and safely closes recording cameras. |
 | Anonymous secure participation | Random participant/host capabilities are SHA-256 hashed before storage | A fan joins in one tap without accounts, while privileged host mutations remain protected. |
-| Realtime camera presence | `beginRecording`, sequenced heartbeats, media health, and a five-second expiry cron | New phones appear live; stopped or stale phones disappear without breaking the film. |
+| Realtime camera presence | `beginRecording`, four-second sequenced heartbeats, media health, and bounded presence expiry | New phones appear live; stopped or stale phones disappear without breaking the film. |
+| Media-plane authorization | `authorizeLiveMedia`, `authorizeProgramMedia`, `authorizeParticipantMedia`, and `authorizeHostMedia` re-check hashed capabilities server-to-server | Editing a URL cannot impersonate another camera, mint a room token, upload a fake angle, or list somebody else's Burst. |
 | Authoritative direction | `scheduleScene` and `scheduleAutoScene` commit a layout, camera IDs, revision, and future `cutAtServerMs` | The Program View switches perspectives while the selected phone receives its live state from the same revision. |
 | Reactive director fan-out | Every screen subscribes to `director.programState` with `ConvexClient.onUpdate` | Joins, cuts, and reconnects arrive without polling; a participant Burst cannot mutate the Program View. |
 | Private Burst fan-out | Each recording camera subscribes to capability-protected `bursts.activeCaptureAnchor` | Only expected cameras receive the immutable timing cue; passive contributors upload silently while only the initiator sees feedback. |
@@ -203,6 +217,24 @@ flowchart TB
 | Truthful contribution state | `acknowledgePreserved` distinguishes locally preserved footage from uploaded footage | “Captured” and “uploaded” are real states, not optimistic animation. |
 | Asset provenance | `registerExternalBurstUpload` binds an HTTPS clip to its authenticated participant and Burst | Personal edits use only the cameras that actually contributed to that moment. |
 | Idempotency and ordering | Client sequence numbers, scene idempotency keys, Burst marker IDs, and stable asset IDs | Retries and reconnects do not create duplicate people, cuts, clips, or renders. |
+
+### Production invariants and operating envelope
+
+These are enforced constants or authorization boundaries, not aspirational metrics:
+
+| Invariant | Enforced value | Why it exists |
+| --- | ---: | --- |
+| Presence heartbeat | every **4 seconds** | Keeps live camera membership reactive without a noisy polling UI. |
+| Strict stale-camera cutoff | **20 seconds** | Tolerates ordinary mobile timer jitter while evicting dead camera rows. |
+| Manual scene lead | **600 ms** by default | Gives subscribed screens time to apply the same scene revision together. |
+| Active composition | **1–5 selected angles** | Covers hero through dense multiview while keeping every tile legible. |
+| Burst window | exactly **T−3s → T+3s** | Preserves anticipation and reaction around the attendee's tap. |
+| Burst cluster window | **1.5 seconds** | Nearby independent taps share one real moment without moving its original anchor. |
+| Burst contribution deadline | **8 seconds** | Bounds collection and prevents abandoned cameras from holding an artifact forever. |
+| Rolling desktop segments | **10 seconds**, opened every **3 seconds** | Guarantees a complete six-second window despite segment boundaries. |
+| Burst source ceiling | **1.8 MB ingress**, **950 KB target** | Keeps uploads reliable on festival networks and below the deployed edge boundary. |
+| Signed replay URL | **24-hour HMAC lease** | Renderers can fetch a real source without making the storage bucket enumerable or public. |
+| Room credential | **2-hour**, room- and identity-scoped | Prevents arbitrary cross-room publication while surviving a complete set. |
 
 ### Why removing Convex removes the product
 
@@ -287,7 +319,7 @@ The live deployment is [manyvue-live.ild.chatgpt.site](https://manyvue-live.ild.
 1. Open the URL on the laptop connected to the main display.
 2. Click **Start Film**.
 3. Expand the persistent QR code and scan it with at least two phones.
-4. On each phone, choose its physical stage side and tap **Start My Angle**.
+4. On each phone, tap the browser's **Allow Camera** prompt. The angle immediately publishes and records; use the compact Left / Center / Right control only if the inferred stage position needs correction.
 5. On a phone, open **Live Cuts**, see every connected angle, tap one to watch it privately, then tap **My Angle** to return. The Program View does not change.
 6. On the laptop, click any camera tile to show it immediately. Use **+ Multiview** to select exact tiles, then hold **1, 2, 3, 4, or 5 angles** together; try **Slow Sweep** and **Auto Director**.
 7. Watch a shown phone change to **Your Angle Is Live**.
@@ -305,6 +337,8 @@ The host Burst button intentionally remains disabled until a real attendee camer
 - The laptop can play the room’s continuous soundtrack independently.
 - Full personal recordings stay device-local; only small Burst sources are uploaded for collaborative editing.
 - Full-screen camera presentation uses the sensor’s uncropped field of view. Multiview thumbnails may crop only for compact monitoring.
+- On iPhone/iPad, the live WebRTC camera track stays untouched while a canvas-backed recorder stream handles local persistence; this avoids encoder contention that can black out remote feeds.
+- If connectivity drops, the live room reconnects independently while the local durable recording continues writing one-second chunks to IndexedDB.
 
 ## Run locally
 
@@ -342,6 +376,7 @@ Open `http://localhost:3000` for the Program View. Its QR code generates the mat
 | `CONVEX_DEPLOY_KEY` | Server/CLI deployment authorization; never expose it to the client. |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Token issuance and realtime WebRTC room access. |
 | `NEXT_PUBLIC_LIVEKIT_URL` | Public LiveKit websocket endpoint. |
+| `MEDIA_SIGNING_SECRET` | Dedicated high-entropy HMAC key for private, expiring Burst replay URLs. |
 | `OPENAI_API_KEY`, `OPENAI_MODEL` | Live vision direction and structured edit recipes. |
 | `SHOTSTACK_API_KEY`, `SHOTSTACK_API_BASE_URL` | Production MP4 rendering and status verification. |
 | `SHOTSTACK_WEBHOOK_URL`, `SHOTSTACK_WEBHOOK_TOKEN` | Authenticated render completion callback. |
@@ -364,13 +399,13 @@ The focused test suite covers exact rolling `T−3 → T+3` coverage, overlappin
 
 ```text
 app/
-├── ManyVueApp.tsx                 # Program View + attendee camera experience
-├── BurstLibrary.tsx                # Owner-first synchronized saved Burst replay
+├── ManyVueApp.tsx                  # Program View + one-permission attendee camera
+├── BurstLibrary.tsx               # Capability-gated synchronized replay
 └── api/
     ├── ai/                         # Live director + personal edit recipe
     ├── artifacts/                  # Shotstack render/status/webhook
-    ├── livekit-token/              # Server-side LiveKit token issuance
-    └── uploads/                    # R2 Burst source storage
+    ├── livekit-token/              # Convex-authorized room credential issuance
+    └── uploads/                    # Authorized R2 upload + signed media reads
 
 convex/
 ├── schema.ts                       # Authoritative data model + indexes
@@ -385,13 +420,17 @@ convex/
 lib/
 ├── ai/                             # Validated director/edit contracts
 ├── artifacts/                      # R2, Shotstack, JamBase adapters
-├── media/                          # Durable originals + continuous rolling Burst recorder
-└── realtime/                       # Presence, scene, Burst, auto-director logic
+├── media/                          # Durable originals, iPhone relay, bounded rolling Burst
+├── realtime/                       # Presence, scene, Burst, auto-director logic
+└── security/                       # Expiring HMAC media URL signing + verification
 ```
 
 ## Security and correctness choices
 
 - Host and participant capabilities are random tokens; only SHA-256 hashes are stored in Convex.
+- Live-room credentials are issued only after server-to-server Convex capability verification; client-supplied room identities are never trusted.
+- Burst uploads and listings require capability-bound Convex authorization before object storage is touched.
+- Stored media is not served by a guessable object key: replay/render URLs carry an expiring HMAC signature and capabilities never appear in those URLs.
 - Mutations validate session ownership, participant ownership, recording state, and camera eligibility.
 - Client sequence numbers reject stale heartbeat/recording writes.
 - Idempotency keys make duplicate scene, marker, asset, and render operations safe.
@@ -399,6 +438,7 @@ lib/
 - Shotstack callbacks are token-checked and verified against the authenticated provider API before any state transition.
 - OpenAI output is schema-validated before it can become a production render.
 - Failures remain visible; a failed collaborative artifact never invalidates the attendee’s locally saved original.
+- Production dependencies are audited separately from build tooling; the checked-in framework version has zero known production audit findings at verification time.
 
 ## Technology
 

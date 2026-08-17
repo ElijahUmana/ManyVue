@@ -1,56 +1,107 @@
+import { ConvexHttpClient } from "convex/browser";
 import { SignJWT } from "jose";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { runtimeValue } from "@/lib/runtime/environment";
 
 export const runtime = "edge";
 
-const safe = (value: string | null, fallback: string) =>
-  (value || fallback).replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 64);
+type TokenRequest = {
+  role?: "program" | "camera";
+  sessionSlug?: string;
+  sessionId?: string;
+  participantId?: string;
+  participantCapability?: string;
+  hostCapability?: string;
+};
 
-export async function GET(request: Request) {
-  const url = new URL(request.url);
+function required(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} is required.`);
+  return value.trim();
+}
+
+export async function POST(request: Request) {
   const livekitUrl = runtimeValue("LIVEKIT_URL") || runtimeValue("NEXT_PUBLIC_LIVEKIT_URL");
   const apiKey = runtimeValue("LIVEKIT_API_KEY");
   const apiSecret = runtimeValue("LIVEKIT_API_SECRET");
+  const convexUrl = runtimeValue("CONVEX_URL") || runtimeValue("NEXT_PUBLIC_CONVEX_URL");
 
-  if (!livekitUrl || !apiKey || !apiSecret) {
+  if (!livekitUrl || !apiKey || !apiSecret || !convexUrl) {
     return Response.json(
       {
         configured: false,
-        error: "Live media transport is not configured.",
+        error: "Live media transport is not fully configured.",
         missing: [
           !livekitUrl && "LIVEKIT_URL",
           !apiKey && "LIVEKIT_API_KEY",
           !apiSecret && "LIVEKIT_API_SECRET",
+          !convexUrl && "CONVEX_URL",
         ].filter(Boolean),
       },
       { status: 503 },
     );
   }
 
-  const room = safe(url.searchParams.get("session"), "outside-live");
-  const identity = safe(url.searchParams.get("participant"), crypto.randomUUID());
-  const role = safe(url.searchParams.get("role"), "camera");
-  const name = (url.searchParams.get("name") || (role === "program" ? "Program" : "Crowd Camera")).slice(0, 80);
-  const secret = new TextEncoder().encode(apiSecret);
+  try {
+    const body = await request.json() as TokenRequest;
+    const role = body.role === "program" ? "program" : body.role === "camera" ? "camera" : null;
+    if (!role) return Response.json({ configured: true, error: "A valid media role is required." }, { status: 400 });
 
-  const token = await new SignJWT({
-    name,
-    metadata: JSON.stringify({ role }),
-    video: {
-      roomJoin: true,
-      room,
-      canPublish: role !== "viewer",
-      canSubscribe: true,
-      canPublishData: true,
-    },
-  })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .setIssuer(apiKey)
-    .setSubject(identity)
-    .setIssuedAt()
-    .setNotBefore("-5s")
-    .setExpirationTime("2h")
-    .sign(secret);
+    const participantId = required(body.participantId, "participantId") as Id<"participants">;
+    const participantCapability = required(body.participantCapability, "participantCapability");
+    const convex = new ConvexHttpClient(convexUrl);
+    const authorized = role === "program"
+      ? await convex.query(api.sessions.authorizeProgramMedia, {
+          sessionId: required(body.sessionId, "sessionId") as Id<"sessions">,
+          hostCapability: required(body.hostCapability, "hostCapability"),
+          participantId,
+          participantCapability,
+        })
+      : await convex.query(api.participants.authorizeLiveMedia, {
+          participantId,
+          participantCapability,
+          sessionSlug: required(body.sessionSlug, "sessionSlug"),
+        });
 
-  return Response.json({ configured: true, token, url: livekitUrl, room, identity });
+    const secret = new TextEncoder().encode(apiSecret);
+    const token = await new SignJWT({
+      name: authorized.displayName,
+      metadata: JSON.stringify({ role, participantId }),
+      video: {
+        roomJoin: true,
+        room: authorized.room,
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: true,
+      },
+    })
+      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setIssuer(apiKey)
+      .setSubject(authorized.identity)
+      .setIssuedAt()
+      .setNotBefore("-5s")
+      .setExpirationTime("2h")
+      .sign(secret);
+
+    return Response.json({
+      configured: true,
+      token,
+      url: livekitUrl,
+      room: authorized.room,
+      identity: authorized.identity,
+    });
+  } catch (error) {
+    console.error("ManyVue media authorization rejected a token request.", error);
+    return Response.json(
+      { configured: true, error: "This device is not authorized for the requested live room." },
+      { status: 403 },
+    );
+  }
+}
+
+export async function GET() {
+  return Response.json(
+    { configured: true, error: "Live-room credentials are issued only through authenticated POST requests." },
+    { status: 405, headers: { Allow: "POST" } },
+  );
 }

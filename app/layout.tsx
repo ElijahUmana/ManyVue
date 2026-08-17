@@ -20,16 +20,22 @@ export async function generateMetadata(): Promise<Metadata> {
       template: "%s · ManyVue Live",
     },
     description,
+    icons: {
+      icon: [{ url: "/manyvue-icon.png", type: "image/png", sizes: "1024x1024" }],
+      apple: [{ url: "/manyvue-icon.png", type: "image/png", sizes: "1024x1024" }],
+    },
     openGraph: {
       type: "website",
       url: origin,
       title: "ManyVue Live — The Crowd Is the Camera",
       description,
+      images: [{ url: `${origin}/og.png`, width: 1536, height: 1024, alt: "ManyVue Live turns a crowd of phones into one concert camera crew" }],
     },
     twitter: {
-      card: "summary",
+      card: "summary_large_image",
       title: "ManyVue Live — The Crowd Is the Camera",
       description,
+      images: [`${origin}/og.png`],
     },
   };
 }

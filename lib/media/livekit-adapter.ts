@@ -297,10 +297,10 @@ export function createLiveKitClientBridge(sdkInput: unknown): LiveKitRuntimeBrid
         { setVideoQuality?: (quality: unknown) => void }
       >();
       const events = sdk.RoomEvent;
-      const cameraName = (cameraId: string) => `crowdcut-camera:${cameraId}`;
+      const cameraName = (cameraId: string) => `manyvue-camera:${cameraId}`;
       const parseCameraId = (trackName: unknown, participantId: string) =>
-        typeof trackName === "string" && trackName.startsWith("crowdcut-camera:")
-          ? trackName.slice("crowdcut-camera:".length)
+        typeof trackName === "string" && trackName.startsWith("manyvue-camera:")
+          ? trackName.slice("manyvue-camera:".length)
           : `${participantId}:camera`;
 
       room.on(events.Reconnecting ?? "reconnecting", () => callbacks.onStatus("reconnecting"));

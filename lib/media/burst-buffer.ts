@@ -1,5 +1,7 @@
 import { MediaChunkStore, mediaChunkStore } from "./chunk-store";
 import { DurableMediaRecorder } from "./durable-recorder";
+import { selectDurableBurstChunks } from "./durable-burst-window";
+import { BURST_POST_ROLL_MS, BURST_PRE_ROLL_MS } from "./rolling-burst-recorder";
 import type { BurstCapture, StoredBurstMarker } from "./types";
 
 export interface BurstMarkerInput {
@@ -33,11 +35,8 @@ export class RollingBurstBuffer {
    * that has not happened yet. The pre-roll is already durable in IndexedDB.
    */
   async capture(input: BurstMarkerInput): Promise<BurstCapture> {
-    // Four seconds keeps an immediate real Burst below the production ingress
-    // ceiling at the camera recorder's 1 Mbps Burst bitrate while retaining
-    // both anticipation and reaction around the shared cue.
-    const preRollMs = input.preRollMs ?? 1_500;
-    const postRollMs = input.postRollMs ?? 2_500;
+    const preRollMs = input.preRollMs ?? BURST_PRE_ROLL_MS;
+    const postRollMs = input.postRollMs ?? BURST_POST_ROLL_MS;
     const localMomentMs =
       input.localMomentMs ?? this.clock.serverToLocal(input.serverMomentMs);
     const marker: StoredBurstMarker = {
@@ -56,24 +55,26 @@ export class RollingBurstBuffer {
     await wait(localMomentMs + postRollMs - Date.now());
     await this.recorder.flush();
 
-    const chunks = await this.store.listChunksInWindow(
-      this.recorder.recordingId,
-      localMomentMs - preRollMs,
-      localMomentMs + postRollMs,
+    const selected = selectDurableBurstChunks(
+      await this.store.listChunks(this.recorder.recordingId),
+      (await this.store.getRecording(this.recorder.recordingId))?.startedAtMs ?? localMomentMs - preRollMs,
+      localMomentMs,
+      preRollMs,
+      postRollMs,
     );
-    if (!chunks.length) {
-      throw new Error("No locally recorded media overlaps this Crowd Burst marker.");
+    if (!selected) {
+      throw new Error("No complete local recording covers this ManyVue Burst window.");
     }
 
     return {
       marker,
-      chunks,
+      chunks: selected.chunks,
       blob: new Blob(
-        chunks.map((chunk) => chunk.blob),
+        selected.chunks.map((chunk) => chunk.blob),
         { type: this.recorder.mimeType },
       ),
-      actualStartAtMs: chunks[0].startAtMs,
-      actualEndAtMs: chunks[chunks.length - 1].endAtMs,
+      actualStartAtMs: selected.coverageStartedAtMs,
+      actualEndAtMs: selected.coverageEndedAtMs,
     };
   }
 

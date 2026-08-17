@@ -246,6 +246,34 @@ export const me = query({
   handler: async (ctx, args) => publicParticipant(await assertParticipant(ctx, args.participantId, args.participantCapability)),
 });
 
+/** Authorizes a camera's media-plane identity without ever returning its
+ * capability. The token service calls this server-to-server before minting a
+ * LiveKit credential, so a caller cannot impersonate another participant by
+ * editing query parameters. */
+export const authorizeLiveMedia = query({
+  args: {
+    participantId: v.id("participants"),
+    participantCapability: v.string(),
+    sessionSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await assertParticipant(ctx, args.participantId, args.participantCapability);
+    const session = await requireSessionBySlug(ctx, args.sessionSlug.trim().toLowerCase());
+    if (participant.sessionId !== session._id || participant.role !== "attendee") {
+      throw new ConvexError({ code: "MEDIA_FORBIDDEN", message: "Camera identity does not belong to this session." });
+    }
+    if (session.status === "ended" || !session.publicJoinEnabled) {
+      throw new ConvexError({ code: "SESSION_CLOSED", message: "This camera room is closed." });
+    }
+    return {
+      room: session.slug,
+      identity: participant.livekitIdentity,
+      displayName: participant.displayName ?? "Crowd Camera",
+      role: participant.role,
+    };
+  },
+});
+
 export const activeBySession = query({
   args: { sessionSlug: v.string() },
   handler: async (ctx, { sessionSlug }) => {
