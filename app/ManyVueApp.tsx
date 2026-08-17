@@ -456,6 +456,23 @@ export default function ManyVueApp() {
     feedsRef.current = feeds;
   }, [feeds]);
 
+  useEffect(() => {
+    const client = convexRef.current;
+    if (view !== "program" || !showLive || !client || !convexSessionId || !hostCapability) return;
+    const participantIds = [...new Set(feeds.map((feed) => feed.id))];
+    if (!participantIds.length) return;
+    const confirm = () => client.mutation(api.participants.confirmVisibleMedia, {
+      sessionId: convexSessionId as Id<"sessions">,
+      hostCapability,
+      participantIds: participantIds.map((id) => id as Id<"participants">),
+    }).catch((error: unknown) => {
+      console.error("Visible media lease confirmation failed", error);
+    });
+    void confirm();
+    const timer = window.setInterval(() => void confirm(), 2_500);
+    return () => window.clearInterval(timer);
+  }, [convexSessionId, feeds, hostCapability, showLive, view]);
+
   const stopProgramMirrorRecorders = useCallback(async () => {
     const recorders = [...programMirrorRecordersRef.current.values()];
     programMirrorRecordersRef.current.clear();

@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { action, internalMutation, mutation, query } from "./_generated/server";
 import {
   assertParticipant,
@@ -15,7 +16,7 @@ import {
 } from "./lib/runtime";
 import { expireStalePresence } from "./lib/presence_expiry";
 import { connectionState, deviceInfo, mediaHealth, participantRole, shotMetadataInput } from "./validators";
-import { PRESENCE_STALE_AFTER_MS } from "../lib/realtime/constants";
+import { MAX_ACTIVE_CAMERAS, PRESENCE_STALE_AFTER_MS } from "../lib/realtime/constants";
 
 function assertSequence(previous: number, incoming: number) {
   if (!Number.isSafeInteger(incoming) || incoming < 1) {
@@ -156,6 +157,53 @@ export const heartbeat = mutation({
       leftAt: undefined,
     });
     return { accepted: true, serverNowMs: now };
+  },
+});
+
+/**
+ * The Program View is the authoritative observer of which LiveKit tracks are
+ * actually visible. It renews those participants' media leases so browser
+ * timer throttling cannot make a real on-screen angle disappear from a Burst
+ * snapshot.
+ */
+export const confirmVisibleMedia = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    hostCapability: v.string(),
+    participantIds: v.array(v.id("participants")),
+  },
+  handler: async (ctx, args) => {
+    const session = await assertHost(ctx, args.sessionId, args.hostCapability);
+    const uniqueIds = [...new Set(args.participantIds.map(String))];
+    if (uniqueIds.length > MAX_ACTIVE_CAMERAS) {
+      throw new ConvexError({ code: "TOO_MANY_CAMERAS", message: "Visible media confirmation exceeds the room camera limit." });
+    }
+    const participants = await Promise.all(uniqueIds.map((id) => ctx.db.get(id as Id<"participants">)));
+    if (participants.some((participant) => !participant || participant.sessionId !== session._id)) {
+      throw new ConvexError({ code: "CAMERA_NOT_FOUND", message: "Every visible track must belong to this production." });
+    }
+    const now = Date.now();
+    const confirmed: Id<"participants">[] = [];
+    for (const participant of participants) {
+      if (!participant || participant.recordingState !== "recording") continue;
+      await ctx.db.patch(participant._id, {
+        connectionState: "online",
+        lastSeenAt: now,
+        disconnectedAt: undefined,
+        leftAt: undefined,
+        mediaHealth: {
+          blocked: false,
+          frozen: false,
+          dark: false,
+          blurScore: participant.mediaHealth?.blurScore,
+          motionScore: participant.mediaHealth?.motionScore,
+          connectionQuality: participant.mediaHealth?.connectionQuality ?? 1,
+          observedAt: now,
+        },
+      });
+      confirmed.push(participant._id);
+    }
+    return { confirmedParticipantIds: confirmed, serverNowMs: now };
   },
 });
 

@@ -3,11 +3,17 @@ import { mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { assertHost, assertParticipant } from "./lib/capabilities";
-import { connectedParticipantsBySessionSince, participantIsLiveCamera } from "./lib/runtime";
+import {
+  connectedParticipantsBySessionSince,
+  participantCanReceiveScheduledControl,
+  participantIsLiveCamera,
+  recentParticipantsBySession,
+} from "./lib/runtime";
 import {
   BURST_CONTRIBUTION_DEADLINE_MS,
   BURST_WINDOW_AFTER_MS,
   BURST_WINDOW_BEFORE_MS,
+  CONTROL_RECOVERY_GRACE_MS,
   PRESENCE_STALE_AFTER_MS,
 } from "../lib/realtime/constants";
 import { shouldJoinBurstCluster } from "../lib/realtime/burst-clustering";
@@ -21,7 +27,23 @@ async function activeRecordingParticipants(ctx: MutationCtx, sessionId: Id<"sess
   // Role does not determine whether a device is a camera. A presenter that
   // explicitly publishes and records a host angle must be captured alongside
   // every other live camera at the anchor.
-  return participants.filter((participant) => participantIsLiveCamera(participant, now));
+  const active = participants.filter((participant) => participantIsLiveCamera(participant, now));
+  const known = new Set(active.map((participant) => String(participant._id)));
+  const recoverablePresenters = await recentParticipantsBySession(
+    ctx,
+    sessionId,
+    now - CONTROL_RECOVERY_GRACE_MS,
+  );
+  for (const participant of recoverablePresenters) {
+    if (
+      participant.role !== "presenter" ||
+      known.has(String(participant._id)) ||
+      !participantCanReceiveScheduledControl(participant, now)
+    ) continue;
+    known.add(String(participant._id));
+    active.push(participant);
+  }
+  return active;
 }
 
 function assertClientMarkerId(clientMarkerId: string) {

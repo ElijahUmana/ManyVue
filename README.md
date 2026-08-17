@@ -214,7 +214,7 @@ flowchart TB
 | --- | --- | --- |
 | Session lifecycle | `sessions.create`, `startLive`, `endLive` | One QR opens the correct live production; late joins do not restart it; **Stop Film** ends the session and safely closes recording cameras. |
 | Anonymous secure participation | Random participant/host capabilities are SHA-256 hashed before storage | A fan joins in one tap without accounts, while privileged host mutations remain protected. |
-| Realtime camera presence | `beginRecording`, four-second sequenced heartbeats, media health, and bounded presence expiry | New phones appear live; stopped or stale phones disappear without breaking the film. |
+| Realtime camera presence | Device heartbeats plus host-authorized `confirmVisibleMedia` leases from the actual Program media wall | Browser timer throttling cannot remove a track that the production computer is visibly receiving; stopped tracks still expire safely. |
 | Media-plane authorization | `authorizeLiveMedia`, `authorizeProgramMedia`, `authorizeParticipantMedia`, `authorizeHostMedia`, and `authorizeHostContributionMedia` re-check hashed capabilities server-to-server | Editing a URL cannot impersonate another camera, mint a room token, upload a fake angle, or list somebody else's Burst. |
 | Authoritative direction | `scheduleScene` and `scheduleAutoScene` commit a layout, camera IDs, revision, and future `cutAtServerMs` | The Program View switches perspectives while the selected phone receives its live state from the same revision. |
 | Reactive director fan-out | Every screen subscribes to `director.programState` with `ConvexClient.onUpdate` | Joins, cuts, and reconnects arrive without polling; a participant Burst cannot mutate the Program View. |
