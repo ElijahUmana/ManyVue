@@ -73,7 +73,7 @@ Every eligible phone silently:
 
 Only the device that tapped receives the Burst capture feedback. The Program View and every other camera keep showing exactly what they were already showing.
 
-The Program View simultaneously maintains a bounded low-bitrate safety recorder for every remote phone track. A protected Convex host capture cue can persist the same phone-owned asset when a mobile encoder fails, without replacing or weakening the phone's device-owned original and local Burst.
+The Program View simultaneously maintains a bounded low-bitrate safety recorder for every live track, including the host. At T+3 it finalizes the exact covering segment immediately, uploads the playable source, and marks the Convex contribution ready. Metadata probing and contact-sheet extraction run afterward, so optional enrichment cannot delay angle availability. A protected Convex host capture cue can persist the same phone-owned asset when a mobile encoder fails, without replacing or weakening the phone's device-owned original and local Burst.
 
 **View Bursts** is available on every camera and the Program View. It places the viewer's saved angle—or the Program's lead angle—at the top, with every other saved perspective in a gallery underneath. **Play All Angles** seeks every clip to the same `T−3` point and starts them together as a synchronized multiview.
 
@@ -239,7 +239,8 @@ These are enforced constants or authorization boundaries, not aspirational metri
 | Burst contribution deadline | **8 seconds** | Bounds collection and prevents abandoned cameras from holding an artifact forever. |
 | Device frame ring | **12 FPS**, retaining **7.5 seconds** continuously | Keeps T−3 frames alive until T+3 finishes, without depending on Safari or Chrome MediaRecorder timeslice behavior. |
 | Local Burst output | standalone **T−3s → T+3s** recording persisted to IndexedDB | Every phone owns a directly playable and downloadable personal Burst before network upload. |
-| Program safety segments | **9 seconds**, opened every **3 seconds** per remote phone | Provides redundant coverage of the same Convex anchor without replacing the device-owned capture. |
+| Program safety segments | **9 seconds**, opened every **3 seconds**, finalized at **T+3** | Makes every live angle uploadable at the earliest truthful instant without replacing device-owned capture. |
+| Burst gallery refresh | every **700 ms** while sources are missing | Exposes newly ready angles quickly without continuously polling completed moments. |
 | Burst source ceiling | **1.8 MB ingress**, bounded low-bitrate sources | Keeps uploads reliable on congested event networks and below the deployed edge boundary. |
 | Signed replay URL | **24-hour HMAC lease** | Renderers can fetch a real source without making the storage bucket enumerable or public. |
 | Room credential | **2-hour**, room- and identity-scoped | Prevents arbitrary cross-room publication while surviving a complete set. |

@@ -15,7 +15,7 @@ import {
   RollingBurstRecorder,
   type RollingBurstCapture,
 } from "@/lib/media";
-import { probeVideoDurationMs, tryCreateContactSheet } from "@/lib/media/video-artifact";
+import { tryCreateContactSheet } from "@/lib/media/video-artifact";
 import { PRESENCE_HEARTBEAT_MS } from "@/lib/realtime/constants";
 import { BurstLibrary, type BurstLibraryEntry, type LocalBurstSource } from "./BurstLibrary";
 
@@ -468,15 +468,15 @@ export default function ManyVueApp() {
       return;
     }
 
-    const remoteFeeds = feeds.filter((feed) => !feed.local && feed.stream.getVideoTracks().some((track) => track.readyState === "live"));
-    const liveIds = new Set(remoteFeeds.map((feed) => feed.id));
+    const productionFeeds = feeds.filter((feed) => feed.stream.getVideoTracks().some((track) => track.readyState === "live"));
+    const liveIds = new Set(productionFeeds.map((feed) => feed.id));
     for (const [feedId, recorder] of programMirrorRecordersRef.current) {
       if (liveIds.has(feedId)) continue;
       programMirrorRecordersRef.current.delete(feedId);
       void recorder.stop().catch(() => undefined);
     }
 
-    for (const feed of remoteFeeds) {
+    for (const feed of productionFeeds) {
       if (programMirrorRecordersRef.current.has(feed.id) || programMirrorStartingRef.current.has(feed.id)) continue;
       const mirrorStream = new MediaStream(feed.stream.getVideoTracks());
       const recorder = new RollingBurstRecorder(mirrorStream, {
@@ -492,7 +492,7 @@ export default function ManyVueApp() {
       const starting = recorder.start()
         .then(async () => {
           const stillLive = feedsRef.current.some((current) =>
-            current.id === feed.id && !current.local && current.stream.getVideoTracks().some((track) => track.readyState === "live"),
+            current.id === feed.id && current.stream.getVideoTracks().some((track) => track.readyState === "live"),
           );
           if (!stillLive) {
             await recorder.stop().catch(() => undefined);
@@ -1139,11 +1139,8 @@ export default function ManyVueApp() {
           burstOffsetMs: capture.burstOffsetMs,
         };
       });
-      const probe = await probeVideoDurationMs(capture.blob, capture.availableDurationMs);
-      const burstOffsetMs = Math.min(
-        probe.durationMs,
-        Math.max(0, capture.burstOffsetMs),
-      );
+      const durationMs = Math.min(20_000, Math.max(500, Math.round(capture.availableDurationMs)));
+      const burstOffsetMs = Math.min(durationMs, Math.max(0, capture.burstOffsetMs));
 
       await client.mutation(api.bursts.acknowledgePreserved, {
         participantId: participantId as Id<"participants">,
@@ -1153,15 +1150,14 @@ export default function ManyVueApp() {
         preservedEndMs: Math.max(1, capture.segmentEndedAtMs - recordingStartedRef.current),
       });
 
-      const sheet = await tryCreateContactSheet(capture.blob, burstOffsetMs);
       const uploaded = await uploadBurstCaptureAssets({
         session: sessionId,
         participant: participantId,
         access: { role: "participant", participantId, participantCapability },
         burstId: sharedId,
         clip: capture.blob,
-        thumbnail: sheet.ok ? sheet.blob : null,
-        durationMs: probe.durationMs,
+        thumbnail: null,
+        durationMs,
         burstOffsetMs,
       });
       const clientAssetId = `burst-${sharedId}-${participantId}`;
@@ -1174,15 +1170,48 @@ export default function ManyVueApp() {
         ...(uploaded.thumbnail?.url ? { thumbnailUrl: uploaded.thumbnail.url } : {}),
         mimeType: capture.blob.type || "video/webm",
         byteLength: capture.blob.size,
-        durationMs: probe.durationMs,
+        durationMs,
         startsAtServerMs: Math.round(capture.segmentStartedAtMs - serverClockOffsetRef.current),
         endsAtServerMs: Math.round(capture.segmentEndedAtMs - serverClockOffsetRef.current),
       });
       burstCapturedIdsRef.current.add(sharedId);
       burstCaptureAttemptsRef.current.delete(sharedId);
       if (initiatedHere) {
-        await promoteCapturedBurst(marker, Boolean(uploaded.thumbnailWarning));
+        await promoteCapturedBurst(marker);
       }
+      // The playable clip and ready state are the critical path. Contact-sheet
+      // extraction can take seconds on Safari, so enrich the same idempotent
+      // asset after every angle is already visible in View Bursts.
+      void (async () => {
+        const sheet = await tryCreateContactSheet(capture.blob, burstOffsetMs);
+        if (!sheet.ok) return;
+        const enriched = await uploadBurstCaptureAssets({
+          session: sessionId,
+          participant: participantId,
+          access: { role: "participant", participantId, participantCapability },
+          burstId: sharedId,
+          clip: capture.blob,
+          thumbnail: sheet.blob,
+          durationMs,
+          burstOffsetMs,
+        });
+        if (!enriched.thumbnail?.url) return;
+        await client.mutation(api.assets.registerExternalBurstUpload, {
+          participantId: participantId as Id<"participants">,
+          participantCapability,
+          burstId: sharedBurst._id,
+          clientAssetId,
+          clipUrl: enriched.clip.url,
+          thumbnailUrl: enriched.thumbnail.url,
+          mimeType: capture.blob.type || "video/webm",
+          byteLength: capture.blob.size,
+          durationMs,
+          startsAtServerMs: Math.round(capture.segmentStartedAtMs - serverClockOffsetRef.current),
+          endsAtServerMs: Math.round(capture.segmentEndedAtMs - serverClockOffsetRef.current),
+        });
+      })().catch((error: unknown) => {
+        console.warn("Deferred Burst contact sheet failed", error);
+      });
     } catch (error) {
       burstCaptureIdsRef.current.delete(sharedId);
       if (attempt < 3 && Date.now() <= sharedBurst.windowEndServerMs + serverClockOffsetRef.current + 60_000) {
@@ -1256,8 +1285,8 @@ export default function ManyVueApp() {
     try {
       const localAnchorMs = sharedBurst.anchorServerMs + serverClockOffsetRef.current;
       const capture = await recorder.captureAt(localAnchorMs);
-      const probe = await probeVideoDurationMs(capture.blob, capture.availableDurationMs);
-      const burstOffsetMs = Math.min(probe.durationMs, Math.max(0, capture.burstOffsetMs));
+      const durationMs = Math.min(20_000, Math.max(500, Math.round(capture.availableDurationMs)));
+      const burstOffsetMs = Math.min(durationMs, Math.max(0, capture.burstOffsetMs));
       const uploaded = await uploadBurstCaptureAssets({
         session: sessionId,
         participant: targetParticipantId,
@@ -1269,7 +1298,7 @@ export default function ManyVueApp() {
         burstId: sharedId,
         clip: capture.blob,
         thumbnail: null,
-        durationMs: probe.durationMs,
+        durationMs,
         burstOffsetMs,
       });
       await client.mutation(api.assets.registerExternalBurstUploadByHost, {
@@ -1281,7 +1310,7 @@ export default function ManyVueApp() {
         clipUrl: uploaded.clip.url,
         mimeType: capture.blob.type || "video/webm",
         byteLength: capture.blob.size,
-        durationMs: probe.durationMs,
+        durationMs,
         startsAtServerMs: Math.round(capture.segmentStartedAtMs - serverClockOffsetRef.current),
         endsAtServerMs: Math.round(capture.segmentEndedAtMs - serverClockOffsetRef.current),
       });

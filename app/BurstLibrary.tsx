@@ -244,7 +244,7 @@ export function BurstLibrary({
 
   useEffect(() => {
     if (!open || !selectedBurstId || sources.length >= selectedExpectedCount) return;
-    const timer = window.setInterval(() => void load(), 2_400);
+    const timer = window.setInterval(() => void load(), 700);
     return () => window.clearInterval(timer);
   }, [load, open, selectedBurstId, selectedExpectedCount, sources.length]);
 

@@ -253,7 +253,14 @@ export class RollingBurstRecorder {
 
     candidate.pins += 1;
     try {
-      const completed = await this.finalizeWhenScheduled(candidate);
+      const exactWindowEndMs = anchorMs + this.postRollMs;
+      const remainingPostRollMs = exactWindowEndMs - this.now();
+      if (remainingPostRollMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, remainingPostRollMs));
+      }
+      // Finalize at the earliest truthful instant: as soon as T+3 exists. A
+      // later scheduled segment stop only adds latency and surplus footage.
+      const completed = await this.finalizeSegment(candidate);
       if (!segmentCoversBurstWindow(
         { ...completed, coverageEndAtMs: completed.endedAtMs },
         anchorMs,
@@ -342,23 +349,6 @@ export class RollingBurstRecorder {
     this.segments.push(segment);
     this.firstSegmentStartedAtMs ??= startedAtMs;
     this.pruneMemory();
-  }
-
-  private finalizeWhenScheduled(segment: RuntimeSegment): Promise<CompletedSegment> {
-    if (segment.state === "complete" && segment.completed) return Promise.resolve(segment.completed);
-    if (segment.state === "failed") {
-      return Promise.reject(segment.failure ?? new RollingBurstRecorderError("SEGMENT_FAILED", "Rolling segment failed."));
-    }
-    // Do not stop at the marker: waiting for the segment's independent stop
-    // event preserves a complete playable MediaRecorder file through T+3.
-    return segment.finalizePromise ?? new Promise<CompletedSegment>((resolve, reject) => {
-      const poll = () => {
-        if (segment.state === "complete" && segment.completed) resolve(segment.completed);
-        else if (segment.state === "failed") reject(segment.failure);
-        else setTimeout(poll, 25);
-      };
-      poll();
-    });
   }
 
   private finalizeSegment(segment: RuntimeSegment): Promise<CompletedSegment> {
