@@ -196,7 +196,28 @@ export const triggerByHost = mutation({
       throw new ConvexError({ code: "INVALID_HOST_ACTOR", message: "The Program View presenter is not part of this session." });
     }
     const now = Date.now();
+    // Pressing the host control is itself authoritative proof that the Program
+    // View is alive. Refresh its lease before snapshotting cameras so encoder
+    // load or a throttled heartbeat can never omit a visibly published host.
+    await ctx.db.patch(actor._id, {
+      connectionState: "online",
+      lastSeenAt: now,
+      disconnectedAt: undefined,
+      leftAt: undefined,
+    });
+    const refreshedActor = {
+      ...actor,
+      connectionState: "online" as const,
+      lastSeenAt: now,
+      disconnectedAt: undefined,
+      leftAt: undefined,
+    };
     const active = await activeRecordingParticipants(ctx, session._id, now);
+    if (
+      refreshedActor.recordingState === "recording" &&
+      participantIsLiveCamera(refreshedActor, now) &&
+      !active.some((camera) => camera._id === refreshedActor._id)
+    ) active.push(refreshedActor);
     if (!active.length) {
       throw new ConvexError({ code: "NO_LIVE_CAMERAS", message: "At least one recording crowd camera is required for a Burst." });
     }

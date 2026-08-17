@@ -1541,10 +1541,11 @@ export default function ManyVueApp() {
 
   const triggerBurst = useCallback(async () => {
     const hostCanCue = view === "program" && showLive && feedsRef.current.some((feed) => !feed.local);
+    const hostAngleReady = !feedsRef.current.some((feed) => feed.local) || burstBufferReady;
     if (
       burstPending ||
       (view === "camera" && (!recording || !burstBufferReady)) ||
-      (view === "program" && !hostCanCue)
+      (view === "program" && (!hostCanCue || !hostAngleReady))
     ) return;
     setBurstPending(true);
     const markerId = crypto.randomUUID();
@@ -2054,6 +2055,7 @@ export default function ManyVueApp() {
   );
 
   const hostAnglePublished = feeds.some((feed) => feed.local);
+  const hostBurstWarming = hostAnglePublished && !burstBufferReady;
   const crowdCameraCount = feeds.filter((feed) => !feed.local).length;
   const programRoomReady = booted && Boolean(participantId) && (
     !process.env.NEXT_PUBLIC_CONVEX_URL || Boolean(convexSessionId && hostCapability)
@@ -2504,10 +2506,14 @@ export default function ManyVueApp() {
           <button
             className="dock-button burst-control"
             onClick={() => void triggerBurst()}
-            disabled={crowdCameraCount === 0 || burstPending || !showLive}
-            title={crowdCameraCount === 0 ? "At least one recording crowd camera is required." : "Cue the same Burst instant on every recording phone."}
+            disabled={crowdCameraCount === 0 || burstPending || !showLive || hostPublishing || hostBurstWarming}
+            title={hostBurstWarming
+              ? "Wait for the published host angle to retain its complete T−3 buffer."
+              : crowdCameraCount === 0
+                ? "At least one recording crowd camera is required."
+                : "Cue the same Burst instant on every recording phone and the host angle."}
           >
-            {burstPending ? "SAVING BURST…" : "BURST ALL ANGLES"}
+            {hostBurstWarming ? "PRIMING HOST T−3…" : burstPending ? "SAVING BURST…" : "BURST ALL ANGLES"}
           </button>
         </div>
       </section>
