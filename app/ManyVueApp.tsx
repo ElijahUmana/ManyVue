@@ -1694,10 +1694,11 @@ export default function ManyVueApp() {
   const publishHostAngle = useCallback(async () => {
     if (hostPublishing || feedsRef.current.some((feed) => feed.local)) return;
     setHostPublishing(true);
+    let stream: MediaStream | null = null;
     try {
       if (!showLive) await startProgram();
       setTransportMessage("Opening this computer's optional host camera…");
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
           width: { ideal: 1280 },
@@ -1709,16 +1710,6 @@ export default function ManyVueApp() {
       });
       setCameraStream(stream);
       cameraStreamRef.current = stream;
-      const rollingBurst = new RollingBurstRecorder(stream, {
-        participantId,
-        onError: (error) => setTransportMessage(`Host Burst buffer: ${error.message}`),
-      });
-      await rollingBurst.start();
-      rollingBurstRef.current = rollingBurst;
-      const rollingReadyAt = rollingBurst.readyAtMs;
-      if (rollingReadyAt === null) throw new Error("The host Burst pre-roll recorder did not start.");
-      const startedAt = Date.now();
-      recordingStartedRef.current = startedAt;
       const room = await connectTransport("program");
       if (room) {
         const { Track, VideoPresets } = await import("livekit-client");
@@ -1731,6 +1722,8 @@ export default function ManyVueApp() {
           degradationPreference: "balanced",
         });
       }
+      const startedAt = Date.now();
+      recordingStartedRef.current = startedAt;
       const host: Feed = {
         id: participantId,
         angle: "CENTER",
@@ -1740,25 +1733,63 @@ export default function ManyVueApp() {
         joinedAt: Date.now(),
       };
       setFeeds((current) => [...current.filter((feed) => feed.id !== host.id), host]);
+      setScene({
+        layout: "hero",
+        activeIds: [host.id],
+        cutAt: Date.now(),
+        revision: Date.now(),
+        source: "manual",
+        reason: "Host camera published",
+      });
+      setProgramComposition(1);
+      setDirectorDecision("MANUAL · HOST ANGLE LIVE");
       setCameraStartedAt(startedAt);
       setBurstBufferReady(false);
-      setTransportMessage("Host angle is live — priming its exact three-second pre-roll…");
-      await wait(Math.max(0, rollingReadyAt - Date.now()));
-      if (convexRef.current && participantCapability) {
-        await convexRef.current.mutation(api.participants.updateShotMetadata, {
-          participantId: participantId as Id<"participants">,
-          participantCapability,
-          shotMetadata: { stageZone: "center", framing: "medium", confidence: 1, source: "self_reported" },
-        });
-        await activateRecordingParticipant(participantId, participantCapability);
-      }
+      setTransportMessage("Host angle is live — adding it to realtime production control…");
+
       setRecording(true);
-      setBurstBufferReady(true);
-      setTransportMessage("Host angle is live and silently contributes to every synchronized Burst.");
+      try {
+        if (convexRef.current && participantCapability) {
+          await convexRef.current.mutation(api.participants.updateShotMetadata, {
+            participantId: participantId as Id<"participants">,
+            participantCapability,
+            shotMetadata: { stageZone: "center", framing: "medium", confidence: 1, source: "self_reported" },
+          });
+          await activateRecordingParticipant(participantId, participantCapability);
+        }
+        await commitScene([host.id], "hero", "Host camera published", "manual");
+      } catch (error) {
+        setTransportMessage(error instanceof Error
+          ? `Host angle is visible; shared scene sync is retrying: ${error.message}`
+          : "Host angle is visible; shared scene sync is retrying.");
+      }
+
+      try {
+        const hostBurstRecorder = new FrameRingBurstRecorder(stream, {
+          participantId,
+          onError: (error) => setTransportMessage(`Host angle is live; local Burst capture: ${error.message}`),
+        });
+        await hostBurstRecorder.start();
+        rollingBurstRef.current = hostBurstRecorder;
+        const readyAt = hostBurstRecorder.readyAtMs;
+        if (readyAt === null) throw new Error("Host Burst pre-roll did not start.");
+        setTransportMessage("Host angle is live — priming its local T−3 frame ring…");
+        await wait(Math.max(0, readyAt - Date.now()));
+        if (rollingBurstRef.current !== hostBurstRecorder || cameraStreamRef.current !== stream) {
+          throw new Error("Host Burst priming was interrupted.");
+        }
+        setBurstBufferReady(true);
+        setTransportMessage("Host angle is live and contributes its own local Burst source.");
+      } catch (error) {
+        setBurstBufferReady(false);
+        setTransportMessage(error instanceof Error
+          ? `Host angle is live; local Burst capture is unavailable: ${error.message}`
+          : "Host angle is live; local Burst capture is unavailable.");
+      }
     } catch (error) {
       await rollingBurstRef.current?.stop().catch(() => undefined);
       rollingBurstRef.current = null;
-      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      stream?.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
       setCameraStream(null);
       setRecording(false);
@@ -1768,7 +1799,7 @@ export default function ManyVueApp() {
     } finally {
       setHostPublishing(false);
     }
-  }, [activateRecordingParticipant, connectTransport, hostPublishing, participantCapability, participantId, showLive, startProgram]);
+  }, [activateRecordingParticipant, commitScene, connectTransport, hostPublishing, participantCapability, participantId, showLive, startProgram]);
 
   useEffect(() => {
     if (!showLive) return;

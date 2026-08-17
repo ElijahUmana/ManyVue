@@ -55,6 +55,8 @@ The projected Program View is one deliberate production—not a dashboard. It su
 
 The camera selected by the room and the phone receiving the live confirmation are driven by the same authoritative scene revision.
 
+Host-camera publication has its own critical path: permission, media publication, and immediate Program View insertion complete before Convex scene scheduling or Burst priming. A control-plane or recorder failure can degrade those secondary capabilities, but it cannot remove a valid host video feed.
+
 ### 3. Crowd Burst
 
 The production operator or any recording attendee can tap a Burst immediately—there is no room-wide countdown. From the instant Camera permission resolves, each phone writes its complete original to IndexedDB and maintains a compressed in-memory frame ring independent of browser MediaRecorder chunk behavior. Convex snapshots the eligible camera set at tap time and reactively fans out one shared anchor.
