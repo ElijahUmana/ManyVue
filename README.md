@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/og.png" alt="ManyVue Live — the crowd is the camera" width="100%" />
+  <img src="public/manyvue.png" alt="ManyVue Live — many real phone perspectives become one live film" width="100%" />
 </p>
 
 <h1 align="center">ManyVue Live</h1>
