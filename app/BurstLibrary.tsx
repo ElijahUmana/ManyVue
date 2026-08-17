@@ -11,6 +11,14 @@ export type BurstLibraryEntry = {
   status?: string;
 };
 
+export type LocalBurstSource = {
+  burstId: string;
+  url: string;
+  extension: "mp4" | "webm";
+  durationMs: number;
+  burstOffsetMs: number;
+};
+
 type BurstSource = {
   participantId: string;
   asset: ListedMediaAsset;
@@ -19,6 +27,21 @@ type BurstSource = {
 };
 
 const WINDOW_RADIUS_SECONDS = 3;
+
+function LivePreservationPreview({ stream }: { stream: MediaStream }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    video.srcObject = stream;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    void video.play().catch(() => undefined);
+    return () => { video.srcObject = null; };
+  }, [stream]);
+  return <video ref={ref} autoPlay muted playsInline aria-label="Your live angle while the Burst is preserved" />;
+}
 
 function asBurstSource(asset: ListedMediaAsset): BurstSource | null {
   if (asset.metadata.kind !== "burst-source" || !asset.metadata.participant) return null;
@@ -119,6 +142,8 @@ export function BurstLibrary({
   convexSessionId,
   hostCapability,
   bursts,
+  localBurstSource,
+  localPreviewStream,
   programView = false,
   onClose,
 }: {
@@ -129,6 +154,8 @@ export function BurstLibrary({
   convexSessionId?: string;
   hostCapability?: string;
   bursts: BurstLibraryEntry[];
+  localBurstSource?: LocalBurstSource | null;
+  localPreviewStream?: MediaStream | null;
   programView?: boolean;
   onClose: () => void;
 }) {
@@ -182,18 +209,38 @@ export function BurstLibrary({
   }, [mediaAccess, open, selectedBurstId, sessionId]);
 
   const sources = useMemo(() => {
-    if (loadedBurstId !== selectedBurstId) return [];
+    if (loadedBurstId !== selectedBurstId && localBurstSource?.burstId !== selectedBurstId) return [];
     const perParticipant = new Map<string, BurstSource>();
-    for (const asset of assets) {
+    for (const asset of loadedBurstId === selectedBurstId ? assets : []) {
       const source = asBurstSource(asset);
       if (source) perParticipant.set(source.participantId, source);
+    }
+    if (localBurstSource?.burstId === selectedBurstId) {
+      perParticipant.set(ownerParticipantId, {
+        participantId: ownerParticipantId,
+        durationMs: localBurstSource.durationMs,
+        burstOffsetMs: localBurstSource.burstOffsetMs,
+        asset: {
+          key: `local/${selectedBurstId}/${ownerParticipantId}`,
+          url: localBurstSource.url,
+          size: 0,
+          uploaded: new Date().toISOString(),
+          contentType: localBurstSource.extension === "mp4" ? "video/mp4" : "video/webm",
+          metadata: {
+            participant: ownerParticipantId,
+            kind: "burst-source",
+            durationMs: String(localBurstSource.durationMs),
+            burstOffsetMs: String(localBurstSource.burstOffsetMs),
+          },
+        },
+      });
     }
     return [...perParticipant.values()].sort((left, right) => {
       if (left.participantId === ownerParticipantId) return -1;
       if (right.participantId === ownerParticipantId) return 1;
       return left.participantId.localeCompare(right.participantId);
     });
-  }, [assets, loadedBurstId, ownerParticipantId, selectedBurstId]);
+  }, [assets, loadedBurstId, localBurstSource, ownerParticipantId, selectedBurstId]);
 
   useEffect(() => {
     if (!open || !selectedBurstId || sources.length >= selectedExpectedCount) return;
@@ -270,8 +317,9 @@ export function BurstLibrary({
             />
           ) : (
             <div className="burst-owner-waiting">
+              {localPreviewStream && <LivePreservationPreview stream={localPreviewStream} />}
               <i />
-              <div><b>MY ANGLE IS BEING PRESERVED</b><span>The full recording continues while this six-second replay uploads.</span></div>
+              <div><b>MY ANGLE IS LIVE · LOCKING T−3 → T+3</b><span>The local replay replaces this live view automatically when encoding completes.</span></div>
             </div>
           )}
 

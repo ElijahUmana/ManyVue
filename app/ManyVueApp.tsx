@@ -17,7 +17,7 @@ import {
 } from "@/lib/media";
 import { probeVideoDurationMs, tryCreateContactSheet } from "@/lib/media/video-artifact";
 import { PRESENCE_HEARTBEAT_MS } from "@/lib/realtime/constants";
-import { BurstLibrary, type BurstLibraryEntry } from "./BurstLibrary";
+import { BurstLibrary, type BurstLibraryEntry, type LocalBurstSource } from "./BurstLibrary";
 
 type Feed = {
   id: string;
@@ -350,7 +350,7 @@ export default function ManyVueApp() {
   const [lastBurstCount, setLastBurstCount] = useState(0);
   const [clipUrl, setClipUrl] = useState("");
   const [clipExtension, setClipExtension] = useState<"mp4" | "webm">("webm");
-  const [localBurstAsset, setLocalBurstAsset] = useState<{ url: string; extension: "mp4" | "webm" } | null>(null);
+  const [localBurstAsset, setLocalBurstAsset] = useState<LocalBurstSource | null>(null);
   const [uploadState, setUploadState] = useState<"idle" | "queued" | "uploading" | "uploaded" | "failed">("idle");
   const [artifactPhase, setArtifactPhase] = useState<ArtifactPhase>("idle");
   const [artifactUrl, setArtifactUrl] = useState("");
@@ -1132,8 +1132,11 @@ export default function ManyVueApp() {
         if (current) URL.revokeObjectURL(current.url);
         localBurstUrlRef.current = localBurstUrl;
         return {
+          burstId: sharedId,
           url: localBurstUrl,
           extension: capture.blob.type.toLowerCase().includes("mp4") ? "mp4" : "webm",
+          durationMs: capture.availableDurationMs,
+          burstOffsetMs: capture.burstOffsetMs,
         };
       });
       const probe = await probeVideoDurationMs(capture.blob, capture.availableDurationMs);
@@ -2211,6 +2214,8 @@ export default function ManyVueApp() {
           ownerParticipantId={participantId}
           participantCapability={participantCapability}
           bursts={burstHistory}
+          localBurstSource={localBurstAsset}
+          localPreviewStream={cameraStream}
           onClose={() => setBurstLibraryOpen(false)}
         />
       </main>

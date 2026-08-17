@@ -235,7 +235,7 @@ These are enforced constants or authorization boundaries, not aspirational metri
 | Burst window | exactly **T−3s → T+3s** | Preserves anticipation and reaction around the attendee's tap. |
 | Burst cluster window | **1.5 seconds** | Nearby independent taps share one real moment without moving its original anchor. |
 | Burst contribution deadline | **8 seconds** | Bounds collection and prevents abandoned cameras from holding an artifact forever. |
-| Device frame ring | **12 FPS**, retaining **4.5 seconds** continuously | Preserves real pre-roll without depending on Safari or Chrome MediaRecorder timeslice behavior. |
+| Device frame ring | **12 FPS**, retaining **7.5 seconds** continuously | Keeps T−3 frames alive until T+3 finishes, without depending on Safari or Chrome MediaRecorder timeslice behavior. |
 | Local Burst output | standalone **T−3s → T+3s** recording persisted to IndexedDB | Every phone owns a directly playable and downloadable personal Burst before network upload. |
 | Program safety segments | **9 seconds**, opened every **3 seconds** per remote phone | Provides redundant coverage of the same Convex anchor without replacing the device-owned capture. |
 | Burst source ceiling | **1.8 MB ingress**, bounded low-bitrate sources | Keeps uploads reliable on congested event networks and below the deployed edge boundary. |

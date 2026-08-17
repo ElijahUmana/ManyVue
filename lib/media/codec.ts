@@ -44,7 +44,7 @@ export function mediaRecorderOptions(
   return {
     ...(selection.mimeType ? { mimeType: selection.mimeType } : {}),
     videoBitsPerSecond,
-    audioBitsPerSecond,
+    ...(audioBitsPerSecond > 0 ? { audioBitsPerSecond } : {}),
   };
 }
 

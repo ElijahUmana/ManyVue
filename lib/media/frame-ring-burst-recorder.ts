@@ -23,6 +23,16 @@ export type FrameRingBurstRecorderOptions = {
 };
 
 const wait = (delayMs: number) => new Promise<void>((resolve) => window.setTimeout(resolve, Math.max(0, delayMs)));
+export const FRAME_RING_RETENTION_MARGIN_MS = 1_500;
+
+export function frameRingRetentionCutoff(
+  capturedAtMs: number,
+  preRollMs = BURST_PRE_ROLL_MS,
+  postRollMs = BURST_POST_ROLL_MS,
+  marginMs = FRAME_RING_RETENTION_MARGIN_MS,
+) {
+  return capturedAtMs - preRollMs - postRollMs - marginMs;
+}
 
 function safeIdentifier(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 72) || "camera";
@@ -324,7 +334,7 @@ export class FrameRingBurstRecorder {
     const capturedAtMs = this.now();
     this.firstFrameAtMs ??= capturedAtMs;
     this.frames.push({ capturedAtMs, blob });
-    const cutoff = capturedAtMs - BURST_PRE_ROLL_MS - 1_500;
+    const cutoff = frameRingRetentionCutoff(capturedAtMs);
     while (this.frames.length > 1 && this.frames[1].capturedAtMs < cutoff) this.frames.shift();
   }
 

@@ -482,6 +482,8 @@ button { cursor: pointer; }
 .burst-crowd-heading em { color: var(--cyan); }
 .burst-crowd-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
 .burst-owner-waiting, .burst-library-empty { min-height: 240px; display: flex; align-items: center; justify-content: center; gap: 14px; border: 1px dashed rgba(245,255,66,.36); border-radius: 18px; background: rgba(245,255,66,.035); text-align: center; }
+.burst-owner-waiting { flex-direction: column; padding: 14px; }
+.burst-owner-waiting video { width: min(100%,760px); max-height: min(42vh,460px); object-fit: contain; border-radius: 14px; background: #000; }
 .burst-owner-waiting i { width: 12px; height: 12px; border-radius: 50%; background: var(--acid); box-shadow: 0 0 22px var(--acid); animation: pulse 1s infinite; }
 .burst-owner-waiting div, .burst-library-empty { flex-direction: column; }
 .burst-owner-waiting b, .burst-library-empty b { color: var(--acid); font-family: var(--font-mono), monospace; font-size: 10px; letter-spacing: .08em; }
