@@ -57,17 +57,21 @@ The camera selected by the room and the phone receiving the live confirmation ar
 
 ### 3. Crowd Burst
 
-The production operator or any recording attendee can tap a Burst immediately—there is no room-wide countdown. From the instant Camera permission resolves, each phone continuously maintains overlapping, independently playable low-bitrate recordings. Convex snapshots the eligible camera set at tap time and reactively fans out one shared anchor.
+The production operator or any recording attendee can tap a Burst immediately—there is no room-wide countdown. From the instant Camera permission resolves, each phone writes its complete original to IndexedDB and maintains a compressed in-memory frame ring independent of browser MediaRecorder chunk behavior. Convex snapshots the eligible camera set at tap time and reactively fans out one shared anchor.
 
 Every eligible phone silently:
 
-- selects the complete rolling segment containing exactly **T−3 seconds through T+3 seconds**;
+- selects real retained frames from exactly **T−3 seconds through T+3 seconds**;
+- encodes those frames into a new standalone, locally playable six-second video;
+- persists that personal Burst to IndexedDB and exposes an immediate local download;
 - acknowledges that its real footage exists;
 - uploads its small Burst source without stopping the main recording;
 - registers the asset against the correct participant and Burst; and
 - contributes its source without interrupting or changing its live camera UI.
 
 Only the device that tapped receives the Burst capture feedback. The Program View and every other camera keep showing exactly what they were already showing.
+
+The Program View simultaneously maintains a bounded low-bitrate safety recorder for every remote phone track. A protected Convex host capture cue can persist the same phone-owned asset when a mobile encoder fails, without replacing or weakening the phone's device-owned original and local Burst.
 
 **View Bursts** is available on every camera and the Program View. It places the viewer's saved angle—or the Program's lead angle—at the top, with every other saved perspective in a gallery underneath. **Play All Angles** seeks every clip to the same `T−3` point and starts them together as a synchronized multiview.
 
@@ -122,7 +126,7 @@ flowchart TB
     PhoneA["Phone A<br/>local original + live angle"]
     PhoneB["Phone B<br/>local original + live angle"]
     PhoneN["Phone N<br/>late join / reconnect"]
-    Program["Program View<br/>projected live film + controls"]
+    Program["Program View<br/>projected film + per-phone safety recorders"]
   end
 
   subgraph Control["CONVEX — authoritative realtime control plane"]
@@ -150,7 +154,7 @@ flowchart TB
   subgraph Media["Live media plane"]
     Token["Capability-gated token issuer<br/>2-hour room-scoped credentials"]
     Transport["Realtime media transport<br/>encrypted video tracks only"]
-    Local["Browser MediaRecorder + IndexedDB<br/>durable original + encoder-isolated iPhone relay"]
+    Local["Device-owned media plane<br/>durable original + frame ring + standalone Burst + IndexedDB"]
   end
 
   subgraph Artifact["Personal artifact plane"]
@@ -184,9 +188,11 @@ flowchart TB
   Transport -- "selected high-quality tracks" --> Program
   PhoneA --> Local
   PhoneB --> Local
+  Transport -- "bounded remote safety tracks" --> Program
 
   PhoneA -- "capability + bounded Burst microclip" --> Gateway
   PhoneB -- "capability + bounded Burst microclip" --> Gateway
+  Program -- "host-authorized phone-owned safety copy" --> Gateway
   Gateway -- "server-to-server authorization" --> Auth
   Gateway --> R2
   R2 -- "expiring signed source URLs" --> Assets
@@ -207,13 +213,13 @@ flowchart TB
 | Session lifecycle | `sessions.create`, `startLive`, `endLive` | One QR opens the correct live production; late joins do not restart it; **Stop Film** ends the session and safely closes recording cameras. |
 | Anonymous secure participation | Random participant/host capabilities are SHA-256 hashed before storage | A fan joins in one tap without accounts, while privileged host mutations remain protected. |
 | Realtime camera presence | `beginRecording`, four-second sequenced heartbeats, media health, and bounded presence expiry | New phones appear live; stopped or stale phones disappear without breaking the film. |
-| Media-plane authorization | `authorizeLiveMedia`, `authorizeProgramMedia`, `authorizeParticipantMedia`, and `authorizeHostMedia` re-check hashed capabilities server-to-server | Editing a URL cannot impersonate another camera, mint a room token, upload a fake angle, or list somebody else's Burst. |
+| Media-plane authorization | `authorizeLiveMedia`, `authorizeProgramMedia`, `authorizeParticipantMedia`, `authorizeHostMedia`, and `authorizeHostContributionMedia` re-check hashed capabilities server-to-server | Editing a URL cannot impersonate another camera, mint a room token, upload a fake angle, or list somebody else's Burst. |
 | Authoritative direction | `scheduleScene` and `scheduleAutoScene` commit a layout, camera IDs, revision, and future `cutAtServerMs` | The Program View switches perspectives while the selected phone receives its live state from the same revision. |
 | Reactive director fan-out | Every screen subscribes to `director.programState` with `ConvexClient.onUpdate` | Joins, cuts, and reconnects arrive without polling; a participant Burst cannot mutate the Program View. |
-| Private Burst fan-out | Each recording camera subscribes to capability-protected `bursts.activeCaptureAnchor` | Only expected cameras receive the immutable timing cue; passive contributors upload silently while only the initiator sees feedback. |
+| Private Burst fan-out | Cameras subscribe to `bursts.activeCaptureAnchor`; the Program View independently subscribes to `activeProgramCaptureAnchor` | Expected phones receive the immutable timing cue, while the host can preserve a redundant copy of the same phone-owned source without changing the live film. |
 | Burst coordination | `trigger` / `triggerByHost` snapshot every active recording camera—including a published host angle—and create contribution records | One action preserves every real view at the same moment without switching the live film. |
 | Truthful contribution state | `acknowledgePreserved` distinguishes locally preserved footage from uploaded footage | “Captured” and “uploaded” are real states, not optimistic animation. |
-| Asset provenance | `registerExternalBurstUpload` binds an HTTPS clip to its authenticated participant and Burst | Personal edits use only the cameras that actually contributed to that moment. |
+| Asset provenance | `registerExternalBurstUpload` and `registerExternalBurstUploadByHost` bind one stable object identity to the expected participant and Burst | Local and mirrored retries converge on one phone-owned asset instead of creating duplicates. |
 | Idempotency and ordering | Client sequence numbers, scene idempotency keys, Burst marker IDs, and stable asset IDs | Retries and reconnects do not create duplicate people, cuts, clips, or renders. |
 
 ### Production invariants and operating envelope
@@ -229,8 +235,10 @@ These are enforced constants or authorization boundaries, not aspirational metri
 | Burst window | exactly **T−3s → T+3s** | Preserves anticipation and reaction around the attendee's tap. |
 | Burst cluster window | **1.5 seconds** | Nearby independent taps share one real moment without moving its original anchor. |
 | Burst contribution deadline | **8 seconds** | Bounds collection and prevents abandoned cameras from holding an artifact forever. |
-| Rolling desktop segments | **10 seconds**, opened every **3 seconds** | Guarantees a complete six-second window despite segment boundaries. |
-| Burst source ceiling | **1.8 MB ingress**, **950 KB target** | Keeps uploads reliable on congested event networks and below the deployed edge boundary. |
+| Device frame ring | **12 FPS**, retaining **4.5 seconds** continuously | Preserves real pre-roll without depending on Safari or Chrome MediaRecorder timeslice behavior. |
+| Local Burst output | standalone **T−3s → T+3s** recording persisted to IndexedDB | Every phone owns a directly playable and downloadable personal Burst before network upload. |
+| Program safety segments | **9 seconds**, opened every **3 seconds** per remote phone | Provides redundant coverage of the same Convex anchor without replacing the device-owned capture. |
+| Burst source ceiling | **1.8 MB ingress**, bounded low-bitrate sources | Keeps uploads reliable on congested event networks and below the deployed edge boundary. |
 | Signed replay URL | **24-hour HMAC lease** | Renderers can fetch a real source without making the storage bucket enumerable or public. |
 | Room credential | **2-hour**, room- and identity-scoped | Prevents arbitrary cross-room publication while surviving a complete set. |
 
@@ -333,10 +341,11 @@ The host Burst button intentionally remains disabled until a real attendee camer
 - Phone microphones are recorded into their local personal footage.
 - Phone microphone tracks are **not** published into the shared Program View, preventing multi-device echo and feedback.
 - The laptop can play the room’s continuous soundtrack independently.
-- Full personal recordings stay device-local; only small Burst sources are uploaded for collaborative editing.
+- Full personal recordings and standalone six-second Bursts are persisted device-locally; only bounded Burst sources are uploaded for collaborative editing.
 - Full-screen camera presentation uses the sensor’s uncropped field of view. Multiview thumbnails may crop only for compact monitoring.
-- On iPhone/iPad, the live WebRTC camera track stays untouched while a canvas-backed recorder stream handles local persistence; this avoids encoder contention that can black out remote feeds.
-- If connectivity drops, the live room reconnects independently while the local durable recording continues writing one-second chunks to IndexedDB.
+- Safari and Chrome use the same frame-ring Burst mechanism, so local capture never depends on whether MediaRecorder emits timely or independently playable timeslices.
+- On iPhone/iPad, the live WebRTC camera track stays untouched while an encoder-isolated stream handles the complete original; Burst pre-roll is retained as compressed frames and encoded only after the tap.
+- If connectivity drops, the live room reconnects independently while the durable original and local Burst persistence continue on the phone.
 
 ## Run locally
 
@@ -391,7 +400,7 @@ npm test
 npm run build
 ```
 
-The focused test suite covers exact rolling `T−3 → T+3` coverage, overlapping segment cadence and upload headroom, automatic direction, scene scheduling, Burst clustering, mobile presence jitter, media upload idempotency, Safari contact-sheet fallback, and edit-recipe validation.
+The focused test suite covers exact frame-ring `T−3 → T+3` sampling, local coverage-gap rejection, host-mirror authorization, overlapping safety-segment cadence, upload headroom, automatic direction, scene scheduling, Burst clustering, mobile presence jitter, media upload idempotency, Safari contact-sheet fallback, and edit-recipe validation.
 
 ## Project map
 
@@ -418,7 +427,7 @@ convex/
 lib/
 ├── ai/                             # Validated director/edit contracts
 ├── artifacts/                      # R2, Shotstack, JamBase adapters
-├── media/                          # Durable originals, iPhone relay, bounded rolling Burst
+├── media/                          # Durable originals, frame-ring local Burst, iPhone relay, host safety capture
 ├── realtime/                       # Presence, scene, Burst, auto-director logic
 └── security/                       # Expiring HMAC media URL signing + verification
 ```

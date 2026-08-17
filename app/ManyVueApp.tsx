@@ -9,12 +9,9 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { burstEditCandidates, listBurstAssets, uploadBurstCaptureAssets } from "@/lib/artifacts/burst-upload";
 import {
-  BURST_POST_ROLL_MS,
-  BURST_PRE_ROLL_MS,
   createRecorderStreamLease,
-  durableBurstCaptureTiming,
   DurableMediaRecorder,
-  selectDurableBurstChunks,
+  FrameRingBurstRecorder,
   RollingBurstRecorder,
   type RollingBurstCapture,
 } from "@/lib/media";
@@ -53,6 +50,9 @@ type BurstCaptureSignal = {
   initiatedHere: boolean;
   readyContributionCount: number;
 };
+type ProgramBurstCaptureSignal = BurstCaptureSignal & {
+  expectedParticipantIds: Id<"participants">[];
+};
 
 type Scene = {
   layout: SceneLayout;
@@ -85,63 +85,6 @@ type BurstRecorder = {
 function needsSingleRecorderPipeline() {
   return /iPad|iPhone|iPod/iu.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-}
-
-/**
- * WebKit can black out a camera track when several MediaRecorders compete with
- * WebRTC. On iPhone, the durable original is therefore also the Burst source:
- * one encoder feeds both outcomes while the high-quality WebRTC track remains
- * independent and continuously live.
- */
-class SingleRecorderBurstBuffer implements BurstRecorder {
-  readonly readyAtMs: number;
-  private stopped = false;
-
-  constructor(
-    private readonly recorder: DurableMediaRecorder,
-    private readonly startedAtMs: number,
-  ) {
-    this.readyAtMs = startedAtMs + BURST_PRE_ROLL_MS;
-  }
-
-  async captureAt(anchorMs: number): Promise<RollingBurstCapture> {
-    if (this.stopped || this.recorder.state !== "recording") {
-      throw new Error("The iPhone Burst recorder is no longer running.");
-    }
-    if (anchorMs - BURST_PRE_ROLL_MS < this.startedAtMs) {
-      throw new Error("The exact three-second Burst pre-roll is still charging.");
-    }
-    await wait(Math.max(0, anchorMs + BURST_POST_ROLL_MS - Date.now()));
-    await this.recorder.flush();
-    const result = await this.recorder.result();
-    const selected = selectDurableBurstChunks(
-      result.chunks,
-      this.startedAtMs,
-      anchorMs,
-      BURST_PRE_ROLL_MS,
-      BURST_POST_ROLL_MS,
-    );
-    if (!selected) throw new Error("The iPhone recorder did not retain the complete three-second pre/post window.");
-    const blob = new Blob(selected.chunks.map((chunk) => chunk.blob), { type: result.recording.mimeType });
-    if (!blob.size) throw new Error("The iPhone Burst source contained no video data.");
-    const timing = durableBurstCaptureTiming(
-      selected,
-      anchorMs,
-      BURST_PRE_ROLL_MS,
-      BURST_POST_ROLL_MS,
-    );
-    return {
-      recordingId: result.recording.id,
-      blob,
-      mimeType: result.recording.mimeType,
-      anchorMs,
-      ...timing,
-    };
-  }
-
-  async stop(): Promise<void> {
-    this.stopped = true;
-  }
 }
 
 function resumeVideo(video: HTMLVideoElement, stream: MediaStream, muted = true) {
@@ -406,6 +349,7 @@ export default function ManyVueApp() {
   const [burstPhase, setBurstPhase] = useState<BurstPhase>("idle");
   const [lastBurstCount, setLastBurstCount] = useState(0);
   const [clipUrl, setClipUrl] = useState("");
+  const [localBurstAsset, setLocalBurstAsset] = useState<{ url: string; extension: "mp4" | "webm" } | null>(null);
   const [uploadState, setUploadState] = useState<"idle" | "queued" | "uploading" | "uploaded" | "failed">("idle");
   const [artifactPhase, setArtifactPhase] = useState<ArtifactPhase>("idle");
   const [artifactUrl, setArtifactUrl] = useState("");
@@ -422,6 +366,8 @@ export default function ManyVueApp() {
   const previewRef = useRef<HTMLVideoElement>(null);
   const recorderRef = useRef<DurableMediaRecorder | null>(null);
   const rollingBurstRef = useRef<BurstRecorder | null>(null);
+  const clipUrlRef = useRef("");
+  const localBurstUrlRef = useRef("");
   const recorderStreamReleaseRef = useRef<(() => void) | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraOpeningRef = useRef(false);
@@ -430,6 +376,12 @@ export default function ManyVueApp() {
   const burstArtifactIdsRef = useRef(new Set<string>());
   const burstCaptureAttemptsRef = useRef(new Map<string, number>());
   const burstCaptureHandlerRef = useRef<(sharedBurst: BurstCaptureSignal) => void>(() => undefined);
+  const programMirrorRecordersRef = useRef(new Map<string, RollingBurstRecorder>());
+  const programMirrorStartingRef = useRef(new Map<string, Promise<void>>());
+  const programMirrorCapturedRef = useRef(new Set<string>());
+  const programMirrorInFlightRef = useRef(new Set<string>());
+  const programMirrorAttemptsRef = useRef(new Map<string, number>());
+  const programMirrorHandlerRef = useRef<(sharedBurst: ProgramBurstCaptureSignal) => void>(() => undefined);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const recordingStartedRef = useRef(0);
   const convexRef = useRef<ConvexClient | null>(null);
@@ -502,6 +454,62 @@ export default function ManyVueApp() {
   useEffect(() => {
     feedsRef.current = feeds;
   }, [feeds]);
+
+  const stopProgramMirrorRecorders = useCallback(async () => {
+    const recorders = [...programMirrorRecordersRef.current.values()];
+    programMirrorRecordersRef.current.clear();
+    await Promise.all(recorders.map((recorder) => recorder.stop().catch(() => undefined)));
+  }, []);
+
+  useEffect(() => {
+    if (view !== "program" || !showLive) {
+      void stopProgramMirrorRecorders();
+      return;
+    }
+
+    const remoteFeeds = feeds.filter((feed) => !feed.local && feed.stream.getVideoTracks().some((track) => track.readyState === "live"));
+    const liveIds = new Set(remoteFeeds.map((feed) => feed.id));
+    for (const [feedId, recorder] of programMirrorRecordersRef.current) {
+      if (liveIds.has(feedId)) continue;
+      programMirrorRecordersRef.current.delete(feedId);
+      void recorder.stop().catch(() => undefined);
+    }
+
+    for (const feed of remoteFeeds) {
+      if (programMirrorRecordersRef.current.has(feed.id) || programMirrorStartingRef.current.has(feed.id)) continue;
+      const mirrorStream = new MediaStream(feed.stream.getVideoTracks());
+      const recorder = new RollingBurstRecorder(mirrorStream, {
+        participantId: `program-mirror-${feed.id}`,
+        segmentDurationMs: 9_000,
+        segmentIntervalMs: 3_000,
+        videoBitsPerSecond: 420_000,
+        audioBitsPerSecond: 0,
+        maxSegmentBytes: 1_500_000,
+        maxStoredSegments: 12,
+        onError: (error) => setTransportMessage(`Safety capture for ${feed.label}: ${error.message}`),
+      });
+      const starting = recorder.start()
+        .then(async () => {
+          const stillLive = feedsRef.current.some((current) =>
+            current.id === feed.id && !current.local && current.stream.getVideoTracks().some((track) => track.readyState === "live"),
+          );
+          if (!stillLive) {
+            await recorder.stop().catch(() => undefined);
+            return;
+          }
+          programMirrorRecordersRef.current.set(feed.id, recorder);
+        })
+        .catch((error: unknown) => {
+          setTransportMessage(error instanceof Error
+            ? `Safety capture for ${feed.label}: ${error.message}`
+            : `Safety capture for ${feed.label} could not start.`);
+        })
+        .finally(() => {
+          programMirrorStartingRef.current.delete(feed.id);
+        });
+      programMirrorStartingRef.current.set(feed.id, starting);
+    }
+  }, [feeds, showLive, stopProgramMirrorRecorders, view]);
 
   useEffect(() => {
     const video = previewRef.current;
@@ -1118,6 +1126,15 @@ export default function ManyVueApp() {
       }
       const localAnchorMs = sharedBurst.anchorServerMs + serverClockOffsetRef.current;
       const capture = await rolling.captureAt(localAnchorMs);
+      const localBurstUrl = URL.createObjectURL(capture.blob);
+      setLocalBurstAsset((current) => {
+        if (current) URL.revokeObjectURL(current.url);
+        localBurstUrlRef.current = localBurstUrl;
+        return {
+          url: localBurstUrl,
+          extension: capture.blob.type.toLowerCase().includes("mp4") ? "mp4" : "webm",
+        };
+      });
       const probe = await probeVideoDurationMs(capture.blob, capture.availableDurationMs);
       const burstOffsetMs = Math.min(
         probe.durationMs,
@@ -1136,7 +1153,7 @@ export default function ManyVueApp() {
       const uploaded = await uploadBurstCaptureAssets({
         session: sessionId,
         participant: participantId,
-        participantCapability,
+        access: { role: "participant", participantId, participantCapability },
         burstId: sharedId,
         clip: capture.blob,
         thumbnail: sheet.ok ? sheet.blob : null,
@@ -1207,6 +1224,112 @@ export default function ManyVueApp() {
     });
   }, [burstBufferReady, participantCapability, participantId, recording]);
 
+  const captureProgramMirrorContribution = useCallback(async (
+    sharedBurst: ProgramBurstCaptureSignal,
+    targetParticipantId: string,
+  ) => {
+    const sharedId = String(sharedBurst._id);
+    const captureKey = `${sharedId}:${targetParticipantId}`;
+    if (programMirrorCapturedRef.current.has(captureKey) || programMirrorInFlightRef.current.has(captureKey)) return;
+    const attempt = (programMirrorAttemptsRef.current.get(captureKey) ?? 0) + 1;
+    programMirrorAttemptsRef.current.set(captureKey, attempt);
+    const recorder = programMirrorRecordersRef.current.get(targetParticipantId);
+    const client = convexRef.current;
+    if (!recorder || !client || !convexSessionId || !hostCapability) {
+      if (attempt < 8 && Date.now() <= sharedBurst.windowEndServerMs + serverClockOffsetRef.current + 60_000) {
+        programMirrorInFlightRef.current.add(captureKey);
+        window.setTimeout(() => {
+          programMirrorInFlightRef.current.delete(captureKey);
+          programMirrorHandlerRef.current(sharedBurst);
+        }, attempt * 700);
+      } else {
+        programMirrorAttemptsRef.current.delete(captureKey);
+      }
+      return;
+    }
+
+    programMirrorInFlightRef.current.add(captureKey);
+    try {
+      const localAnchorMs = sharedBurst.anchorServerMs + serverClockOffsetRef.current;
+      const capture = await recorder.captureAt(localAnchorMs);
+      const probe = await probeVideoDurationMs(capture.blob, capture.availableDurationMs);
+      const burstOffsetMs = Math.min(probe.durationMs, Math.max(0, capture.burstOffsetMs));
+      const uploaded = await uploadBurstCaptureAssets({
+        session: sessionId,
+        participant: targetParticipantId,
+        access: {
+          role: "host",
+          sessionId: convexSessionId,
+          hostCapability,
+        },
+        burstId: sharedId,
+        clip: capture.blob,
+        thumbnail: null,
+        durationMs: probe.durationMs,
+        burstOffsetMs,
+      });
+      await client.mutation(api.assets.registerExternalBurstUploadByHost, {
+        sessionId: convexSessionId as Id<"sessions">,
+        hostCapability,
+        participantId: targetParticipantId as Id<"participants">,
+        burstId: sharedBurst._id,
+        clientAssetId: `burst-${sharedId}-${targetParticipantId}`,
+        clipUrl: uploaded.clip.url,
+        mimeType: capture.blob.type || "video/webm",
+        byteLength: capture.blob.size,
+        durationMs: probe.durationMs,
+        startsAtServerMs: Math.round(capture.segmentStartedAtMs - serverClockOffsetRef.current),
+        endsAtServerMs: Math.round(capture.segmentEndedAtMs - serverClockOffsetRef.current),
+      });
+      programMirrorCapturedRef.current.add(captureKey);
+      programMirrorAttemptsRef.current.delete(captureKey);
+    } catch (error) {
+      if (attempt < 4 && Date.now() <= sharedBurst.windowEndServerMs + serverClockOffsetRef.current + 60_000) {
+        window.setTimeout(() => programMirrorHandlerRef.current(sharedBurst), attempt * 1_200);
+      } else {
+        programMirrorAttemptsRef.current.delete(captureKey);
+        console.error("ManyVue Program mirror contribution failed", {
+          burstId: sharedId,
+          targetParticipantId,
+          attempt,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } finally {
+      programMirrorInFlightRef.current.delete(captureKey);
+    }
+  }, [convexSessionId, hostCapability, sessionId]);
+
+  useEffect(() => {
+    programMirrorHandlerRef.current = (sharedBurst) => {
+      for (const targetParticipantId of sharedBurst.expectedParticipantIds.map(String)) {
+        void captureProgramMirrorContribution(sharedBurst, targetParticipantId);
+      }
+    };
+  }, [captureProgramMirrorContribution]);
+
+  useEffect(() => {
+    const client = convexRef.current;
+    if (view !== "program" || !showLive || !client || !convexSessionId || !hostCapability) return;
+    return client.onUpdate(api.bursts.activeProgramCaptureAnchor, {
+      sessionId: convexSessionId as Id<"sessions">,
+      hostCapability,
+    }, (anchor) => {
+      if (!anchor) return;
+      programMirrorHandlerRef.current({
+        _id: anchor.burstId,
+        anchorServerMs: anchor.anchorServerMs,
+        windowStartServerMs: anchor.windowStartServerMs,
+        windowEndServerMs: anchor.windowEndServerMs,
+        expectedParticipantIds: anchor.expectedParticipantIds,
+        initiatedHere: false,
+        readyContributionCount: anchor.readyContributionCount,
+      });
+    }, (error) => {
+      console.error("Program mirror Burst sync failed", error);
+    });
+  }, [convexSessionId, hostCapability, showLive, view]);
+
   const startCamera = useCallback(async () => {
     if (cameraOpeningRef.current || recording) return;
     cameraOpeningRef.current = true;
@@ -1265,13 +1388,11 @@ export default function ManyVueApp() {
         audioBitsPerSecond: needsSingleRecorderPipeline() ? 48_000 : undefined,
       });
       await recorder.start();
-      const rollingBurst: BurstRecorder = needsSingleRecorderPipeline()
-        ? new SingleRecorderBurstBuffer(recorder, startedAt)
-        : new RollingBurstRecorder(recorderLease.stream, {
-            participantId: convexCamera.id,
-            onError: (error) => setArtifactMessage(`Rolling Burst buffer: ${error.message}`),
-          });
-      if (rollingBurst instanceof RollingBurstRecorder) await rollingBurst.start();
+      const rollingBurst = new FrameRingBurstRecorder(stream, {
+        participantId: convexCamera.id,
+        onError: (error) => setArtifactMessage(`Local Burst recorder: ${error.message}`),
+      });
+      await rollingBurst.start();
       rollingBurstRef.current = rollingBurst;
       const rollingReadyAt = rollingBurst.readyAtMs;
       if (rollingReadyAt === null) throw new Error("The Burst pre-roll recorder did not start.");
@@ -1339,7 +1460,11 @@ export default function ManyVueApp() {
     if (recorder?.state === "recording") {
       const result = await recorder.stop();
       const localUrl = URL.createObjectURL(result.blob);
-      setClipUrl((current) => { if (current) URL.revokeObjectURL(current); return localUrl; });
+      setClipUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        clipUrlRef.current = localUrl;
+        return localUrl;
+      });
       setUploadState((current) => current === "idle" ? "queued" : current);
       setArtifactPhase((current) => current === "idle" ? "saved" : current);
       setArtifactMessage((current) => current || "Your complete original is saved on this device and ready to download.");
@@ -1811,10 +1936,12 @@ export default function ManyVueApp() {
   useEffect(() => () => {
     roomRef.current?.disconnect();
     void rollingBurstRef.current?.stop();
+    void stopProgramMirrorRecorders();
     recorderStreamReleaseRef.current?.();
-    cameraStream?.getTracks().forEach((track) => track.stop());
-    if (clipUrl) URL.revokeObjectURL(clipUrl);
-  }, [cameraStream, clipUrl]);
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
+    if (localBurstUrlRef.current) URL.revokeObjectURL(localBurstUrlRef.current);
+  }, [stopProgramMirrorRecorders]);
 
   const activeFeeds = useMemo(() => {
     const selected = scene.activeIds.map((id) => feeds.find((feed) => feed.id === id)).filter(Boolean) as Feed[];
@@ -2018,6 +2145,13 @@ export default function ManyVueApp() {
             {burstPhase === "preserved" && ownedBurst && (
               <p className="camera-burst-preserved"><b>BURST PRESERVED</b> Your synchronized angle uploads now while the full recording continues uninterrupted.</p>
             )}
+            {localBurstAsset && (
+              <a
+                className="camera-local-burst-download"
+                href={localBurstAsset.url}
+                download={`my-local-manyvue-burst.${localBurstAsset.extension}`}
+              >DOWNLOAD MY LOCAL BURST</a>
+            )}
             <button className="stop-trigger" onClick={stopCamera}>Stop & build my ManyVue</button>
             {transportMessage && <p className="inline-message camera-inline-message">{transportMessage}</p>}
           </section>
@@ -2037,12 +2171,19 @@ export default function ManyVueApp() {
             <video src={artifactUrl || clipUrl} controls playsInline />
             <div className="artifact-actions">
               <a href={artifactUrl || clipUrl} download={artifactUrl ? "my-manyvue.mp4" : "my-angle.webm"}>{artifactUrl ? "DOWNLOAD MANYVUE" : "DOWNLOAD MY ANGLE"}</a>
+              {localBurstAsset && (
+                <a href={localBurstAsset.url} download={`my-local-manyvue-burst.${localBurstAsset.extension}`}>
+                  DOWNLOAD LOCAL BURST
+                </a>
+              )}
               {ownedBurst && !artifactUrl && (["waiting", "failed", "rendering"] as ArtifactPhase[]).includes(artifactPhase) && (
                 <button onClick={() => void buildArtifact()}>
                   {artifactPhase === "rendering" ? "CHECK RENDER" : artifactPhase === "waiting" ? "RETRY MULTI-ANGLE BUILD" : "BUILD FROM REAL ANGLES"}
                 </button>
               )}
               <button onClick={() => {
+                if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
+                clipUrlRef.current = "";
                 setClipUrl("");
                 setArtifactUrl("");
                 setArtifactMessage("");
@@ -2051,6 +2192,11 @@ export default function ManyVueApp() {
                 setUploadState("idle");
                 setArtifactPhase("idle");
                 setBurstPhase("idle");
+                setLocalBurstAsset((current) => {
+                  if (current) URL.revokeObjectURL(current.url);
+                  localBurstUrlRef.current = "";
+                  return null;
+                });
                 renderIdRef.current = "";
               }}>Record another</button>
             </div>

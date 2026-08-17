@@ -3,6 +3,7 @@ export * from "./chunk-store";
 export * from "./codec";
 export * from "./durable-recorder";
 export * from "./durable-burst-window";
+export * from "./frame-ring-burst-recorder";
 export * from "./livekit-adapter";
 export * from "./quality";
 export * from "./reconnect";

@@ -24,7 +24,7 @@ test("uploads a four-second Burst clip before its optional contact sheet with st
   const result = await uploadBurstCaptureAssets({
     session: "room",
     participant: "camera",
-    participantCapability: "participant-secret",
+    access: { role: "participant", participantId: "camera", participantCapability: "participant-secret" },
     burstId: "burst-12345678",
     clip: new Blob(["clip"], { type: "video/mp4" }),
     thumbnail: new Blob(["frame"], { type: "image/jpeg" }),
@@ -49,7 +49,7 @@ test("keeps a successfully uploaded Burst clip when optional thumbnail upload fa
   const result = await uploadBurstCaptureAssets({
     session: "room",
     participant: "camera",
-    participantCapability: "participant-secret",
+    access: { role: "participant", participantId: "camera", participantCapability: "participant-secret" },
     burstId: "burst-12345678",
     clip: new Blob(["clip"], { type: "video/mp4" }),
     thumbnail: new Blob(["frame"], { type: "image/jpeg" }),
@@ -72,7 +72,7 @@ test("fails before network ingress when a Burst violates the deployed body ceili
     uploadBurstCaptureAssets({
       session: "room",
       participant: "camera",
-      participantCapability: "participant-secret",
+      access: { role: "participant", participantId: "camera", participantCapability: "participant-secret" },
       burstId: "burst-12345678",
       clip: new Blob([new Uint8Array(1_800_001)], { type: "video/mp4" }),
       durationMs: 4_000,
@@ -81,6 +81,29 @@ test("fails before network ingress when a Burst violates the deployed body ceili
     (error: unknown) => error instanceof BurstUploadError && error.stage === "clip-upload",
   );
   assert.equal(called, false);
+});
+
+test("host mirror uploads use host authority while preserving the phone identity", async () => {
+  let headers = new Headers();
+  const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    headers = new Headers(init?.headers);
+    return Response.json({ ok: true, key: "clip", url: "https://manyvue.test/clip", duplicate: false });
+  }) as typeof fetch;
+
+  await uploadBurstCaptureAssets({
+    session: "room",
+    participant: "phone-camera",
+    access: { role: "host", sessionId: "session-id", hostCapability: "host-secret" },
+    burstId: "burst-12345678",
+    clip: new Blob(["clip"], { type: "video/mp4" }),
+    durationMs: 9_000,
+    burstOffsetMs: 4_500,
+  }, fakeFetch);
+
+  assert.equal(headers.get("x-manyvue-media-role"), "host");
+  assert.equal(headers.get("x-manyvue-session-id"), "session-id");
+  assert.equal(headers.get("x-manyvue-host-capability"), "host-secret");
+  assert.equal(headers.get("x-manyvue-participant-id"), "phone-camera");
 });
 
 test("lists only the requested Burst through the exact server filter", async () => {

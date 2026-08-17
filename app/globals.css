@@ -410,6 +410,7 @@ button { cursor: pointer; }
 .burst-trigger:not(.caught) .burst-rings { animation: burstPulse 1.6s ease-in-out infinite; }
 .camera-burst-preserved { margin: -2px 2px 0; padding: 10px 12px; border-left: 3px solid var(--acid); border-radius: 8px; background: rgba(5,5,9,.72); color: rgba(255,255,255,.7); font-size: 10px; line-height: 1.4; }
 .camera-burst-preserved b { color: var(--acid); }
+.camera-local-burst-download { min-height: 42px; display: grid; place-items: center; border: 1px solid rgba(245,255,66,.5); border-radius: 12px; background: rgba(245,255,66,.12); color: var(--acid); text-decoration: none; font-family: var(--font-mono), monospace; font-size: 9px; font-weight: 900; letter-spacing: .08em; }
 .camera-inline-message { margin: -3px 4px 0; max-height: 48px; overflow: auto; padding: 8px 10px; border-radius: 9px; background: rgba(5,5,9,.72); color: #ffb4cd; }
 .stop-trigger { min-height: 50px; border: 1px solid var(--line); border-radius: 14px; background: rgba(5,5,9,.58); color: white; backdrop-filter: blur(15px); font-size: 13px; font-weight: 750; }
 .artifact-card { position: absolute; z-index: 10; top: 92px; bottom: max(22px, env(safe-area-inset-bottom)); left: 50%; width: min(760px, calc(100vw - 36px)); transform: translateX(-50%); overflow: auto; border: 1px solid var(--line); background: rgba(7,7,12,.88); backdrop-filter: blur(25px); border-radius: 24px; padding: 22px; display: flex; flex-direction: column; }

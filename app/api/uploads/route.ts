@@ -54,6 +54,28 @@ async function authorizeParticipant(request: Request) {
   return { participantId, participantCapability, burstId, sessionSlug, ...authorization };
 }
 
+async function authorizeHostContribution(request: Request) {
+  const sessionId = requiredHeader(request, "x-manyvue-session-id");
+  const hostCapability = requiredHeader(request, "x-manyvue-host-capability");
+  const participantId = requiredHeader(request, "x-manyvue-participant-id");
+  const burstId = requiredHeader(request, "x-manyvue-burst-id");
+  const sessionSlug = requiredHeader(request, "x-manyvue-session-slug");
+  const authorization = await authorizationClient().query(api.bursts.authorizeHostContributionMedia, {
+    sessionId: sessionId as Id<"sessions">,
+    hostCapability,
+    participantId: participantId as Id<"participants">,
+    burstId: burstId as Id<"bursts">,
+    sessionSlug,
+  });
+  return authorization;
+}
+
+async function authorizeUpload(request: Request) {
+  return request.headers.get("x-manyvue-media-role") === "host"
+    ? await authorizeHostContribution(request)
+    : await authorizeParticipant(request);
+}
+
 async function authorizeListing(request: Request, sessionSlug: string, burstId: string) {
   const role = request.headers.get("x-manyvue-media-role");
   if (role === "host") {
@@ -84,9 +106,9 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "MEDIA object storage is unavailable." }, { status: 503 });
   }
 
-  let authorized: Awaited<ReturnType<typeof authorizeParticipant>>;
+  let authorized: Awaited<ReturnType<typeof authorizeUpload>>;
   try {
-    authorized = await authorizeParticipant(request);
+    authorized = await authorizeUpload(request);
     if (!authorized.canWrite) throw new Error("Camera is not an expected Burst contributor.");
   } catch (error) {
     console.error("ManyVue rejected an unauthorized media upload.", error);

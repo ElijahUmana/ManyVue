@@ -18,6 +18,12 @@ function requireHttpsAssetUrl(value: string, field: string): string {
   }
 }
 
+function externalAssetIdentity(value: string): string {
+  const url = new URL(value);
+  const key = url.searchParams.get("key");
+  return key ? `${url.origin}${url.pathname}?key=${key}` : url.toString();
+}
+
 export const createParticipantUpload = mutation({
   args: {
     participantId: v.id("participants"),
@@ -213,7 +219,7 @@ export const registerExternalBurstUpload = mutation({
         q.eq("participantId", participant._id).eq("clientAssetId", clipClientAssetId),
       )
       .unique();
-    if (existingClip?.externalUrl && existingClip.externalUrl !== clipUrl) {
+    if (existingClip?.externalUrl && externalAssetIdentity(existingClip.externalUrl) !== externalAssetIdentity(clipUrl)) {
       throw new ConvexError({ code: "IDEMPOTENCY_CONFLICT", message: "Burst asset ID already points to another clip." });
     }
     const now = Date.now();
@@ -255,7 +261,7 @@ export const registerExternalBurstUpload = mutation({
           q.eq("participantId", participant._id).eq("clientAssetId", frameClientAssetId),
         )
         .unique();
-      if (existingFrame?.externalUrl && existingFrame.externalUrl !== thumbnailUrl) {
+      if (existingFrame?.externalUrl && externalAssetIdentity(existingFrame.externalUrl) !== externalAssetIdentity(thumbnailUrl)) {
         throw new ConvexError({ code: "IDEMPOTENCY_CONFLICT", message: "Burst asset ID already points to another frame." });
       }
       thumbnailAssetId = existingFrame?._id ?? await ctx.db.insert("assets", {
@@ -300,6 +306,130 @@ export const registerExternalBurstUpload = mutation({
       });
     }
     return { clipAssetId, thumbnailAssetId, duplicate };
+  },
+});
+
+/**
+ * Registers the Program View's redundant recording of an expected phone. The
+ * media remains owned by that phone participant; host authority only supplies
+ * a safety copy when the mobile browser cannot finalize a local fragment.
+ */
+export const registerExternalBurstUploadByHost = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    hostCapability: v.string(),
+    participantId: v.id("participants"),
+    burstId: v.id("bursts"),
+    clientAssetId: v.string(),
+    clipUrl: v.string(),
+    mimeType: v.string(),
+    byteLength: v.number(),
+    durationMs: v.number(),
+    startsAtServerMs: v.number(),
+    endsAtServerMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const session = await assertHost(ctx, args.sessionId, args.hostCapability);
+    const [participant, burst] = await Promise.all([
+      ctx.db.get(args.participantId),
+      ctx.db.get(args.burstId),
+    ]);
+    if (
+      !participant ||
+      !burst ||
+      participant.sessionId !== session._id ||
+      burst.sessionId !== session._id ||
+      !burst.expectedParticipantIds.includes(participant._id)
+    ) {
+      throw new ConvexError({ code: "NOT_REQUESTED", message: "Host mirror is not an expected Burst camera." });
+    }
+    if (!/^[a-zA-Z0-9_-]{8,160}$/u.test(args.clientAssetId)) {
+      throw new ConvexError({ code: "INVALID_ASSET_ID", message: "A stable Burst asset ID is required." });
+    }
+    if (!Number.isSafeInteger(args.byteLength) || args.byteLength <= 0) {
+      throw new ConvexError({ code: "INVALID_ASSET", message: "The Burst microclip must contain bytes." });
+    }
+    if (!Number.isFinite(args.durationMs) || args.durationMs < 500 || args.durationMs > 20_000) {
+      throw new ConvexError({ code: "INVALID_ASSET", message: "Burst duration must be between 0.5 and 20 seconds." });
+    }
+    if (
+      !Number.isFinite(args.startsAtServerMs) ||
+      !Number.isFinite(args.endsAtServerMs) ||
+      args.endsAtServerMs <= args.startsAtServerMs
+    ) {
+      throw new ConvexError({ code: "INVALID_ASSET", message: "Burst server timestamps are invalid." });
+    }
+    const contribution = await ctx.db
+      .query("burstContributions")
+      .withIndex("by_burst_participant", (q) =>
+        q.eq("burstId", burst._id).eq("participantId", participant._id),
+      )
+      .unique();
+    if (!contribution) {
+      throw new ConvexError({ code: "NOT_REQUESTED", message: "The Burst contribution record is missing." });
+    }
+
+    const clipUrl = requireHttpsAssetUrl(args.clipUrl, "clipUrl");
+    const clipClientAssetId = `${args.clientAssetId}-clip`;
+    const existingClip = await ctx.db
+      .query("assets")
+      .withIndex("by_participant_client_asset", (q) =>
+        q.eq("participantId", participant._id).eq("clientAssetId", clipClientAssetId),
+      )
+      .unique();
+    if (existingClip?.externalUrl && externalAssetIdentity(existingClip.externalUrl) !== externalAssetIdentity(clipUrl)) {
+      throw new ConvexError({ code: "IDEMPOTENCY_CONFLICT", message: "Burst asset ID already points to another clip." });
+    }
+    const now = Date.now();
+    const clipAssetId = existingClip?._id ?? await ctx.db.insert("assets", {
+      sessionId: session._id,
+      participantId: participant._id,
+      burstId: burst._id,
+      clientAssetId: clipClientAssetId,
+      kind: "burst_clip",
+      status: "ready",
+      externalUrl: clipUrl,
+      mimeType: args.mimeType.slice(0, 160),
+      byteLength: args.byteLength,
+      durationMs: Math.round(args.durationMs),
+      startsAtServerMs: Math.round(args.startsAtServerMs),
+      endsAtServerMs: Math.round(args.endsAtServerMs),
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (existingClip) {
+      await ctx.db.patch(existingClip._id, {
+        status: "ready",
+        externalUrl: clipUrl,
+        mimeType: args.mimeType.slice(0, 160),
+        byteLength: args.byteLength,
+        durationMs: Math.round(args.durationMs),
+        startsAtServerMs: Math.round(args.startsAtServerMs),
+        endsAtServerMs: Math.round(args.endsAtServerMs),
+        updatedAt: now,
+      });
+    }
+
+    const duplicate = contribution.status === "ready";
+    if (!duplicate) {
+      await ctx.db.patch(contribution._id, {
+        status: "ready",
+        assetId: clipAssetId,
+        failureReason: undefined,
+        updatedAt: now,
+      });
+      const readyContributionCount = burst.readyContributionCount + 1;
+      const previewThreshold = Math.min(3, burst.expectedParticipantIds.length);
+      await ctx.db.patch(burst._id, {
+        readyContributionCount,
+        status:
+          burst.status === "collecting" && readyContributionCount >= previewThreshold
+            ? "preview_ready"
+            : burst.status,
+        updatedAt: now,
+      });
+    }
+    return { clipAssetId, duplicate };
   },
 });
 

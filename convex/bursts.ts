@@ -314,6 +314,41 @@ export const activeCaptureAnchor = query({
   },
 });
 
+/**
+ * Host-side redundant capture cue. The Program View already receives every
+ * remote camera track, so it maintains a low-bitrate rolling safety recorder
+ * for each phone. This protected channel lets it preserve the same Burst when
+ * a mobile browser cannot finalize its own MediaRecorder fragments.
+ */
+export const activeProgramCaptureAnchor = query({
+  args: {
+    sessionId: v.id("sessions"),
+    hostCapability: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await assertHost(ctx, args.sessionId, args.hostCapability);
+    const now = Date.now();
+    const recent = await ctx.db
+      .query("bursts")
+      .withIndex("by_session_anchor", (q) => q.eq("sessionId", session._id))
+      .order("desc")
+      .take(8);
+    const active = recent.find((burst) =>
+      now <= burst.windowEndServerMs + 60_000 &&
+      burst.readyContributionCount < burst.expectedParticipantIds.length,
+    );
+    if (!active) return null;
+    return {
+      burstId: active._id,
+      anchorServerMs: active.anchorServerMs,
+      windowStartServerMs: active.windowStartServerMs,
+      windowEndServerMs: active.windowEndServerMs,
+      expectedParticipantIds: active.expectedParticipantIds,
+      readyContributionCount: active.readyContributionCount,
+    };
+  },
+});
+
 /** Server-to-server authorization for Burst upload and replay access. */
 export const authorizeParticipantMedia = query({
   args: {
@@ -357,6 +392,50 @@ export const authorizeHostMedia = query({
       throw new ConvexError({ code: "MEDIA_FORBIDDEN", message: "Burst does not belong to this production." });
     }
     return { canRead: true, canWrite: false };
+  },
+});
+
+/** Authorizes the Program View to persist a remote phone's mirrored track. */
+export const authorizeHostContributionMedia = query({
+  args: {
+    sessionId: v.id("sessions"),
+    hostCapability: v.string(),
+    participantId: v.id("participants"),
+    burstId: v.id("bursts"),
+    sessionSlug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await assertHost(ctx, args.sessionId, args.hostCapability);
+    const [participant, burst] = await Promise.all([
+      ctx.db.get(args.participantId),
+      ctx.db.get(args.burstId),
+    ]);
+    if (
+      !participant ||
+      !burst ||
+      participant.sessionId !== session._id ||
+      burst.sessionId !== session._id ||
+      session.slug !== args.sessionSlug ||
+      !burst.expectedParticipantIds.includes(participant._id)
+    ) {
+      throw new ConvexError({ code: "MEDIA_FORBIDDEN", message: "Host mirror is not an expected Burst camera." });
+    }
+    const contribution = await ctx.db
+      .query("burstContributions")
+      .withIndex("by_burst_participant", (q) =>
+        q.eq("burstId", burst._id).eq("participantId", participant._id),
+      )
+      .unique();
+    if (!contribution) {
+      throw new ConvexError({ code: "MEDIA_FORBIDDEN", message: "Burst contribution record is missing." });
+    }
+    return {
+      canWrite: true,
+      sessionId: session._id,
+      participantId: participant._id,
+      burstId: burst._id,
+      sessionSlug: session.slug,
+    };
   },
 });
 

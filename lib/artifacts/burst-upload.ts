@@ -28,17 +28,6 @@ export interface ListedMediaAsset {
   metadata: Record<string, string>;
 }
 
-export interface BurstCaptureUploadInput {
-  session: string;
-  participant: string;
-  participantCapability: string;
-  burstId: string;
-  clip: Blob;
-  thumbnail?: Blob | null;
-  durationMs: number;
-  burstOffsetMs: number;
-}
-
 export type BurstMediaAccess =
   | {
       role: "participant";
@@ -50,6 +39,17 @@ export type BurstMediaAccess =
       sessionId: string;
       hostCapability: string;
     };
+
+export interface BurstCaptureUploadInput {
+  session: string;
+  participant: string;
+  access: BurstMediaAccess;
+  burstId: string;
+  clip: Blob;
+  thumbnail?: Blob | null;
+  durationMs: number;
+  burstOffsetMs: number;
+}
 
 export interface BurstCaptureUploadResult {
   clip: UploadedMediaAsset;
@@ -94,7 +94,7 @@ async function uploadOne(
   input: {
     session: string;
     participant: string;
-    participantCapability: string;
+    access: BurstMediaAccess;
     burstId: string;
     kind: "burst-source" | "thumbnail";
     clientAssetId: string;
@@ -117,15 +117,25 @@ async function uploadOne(
       type: input.blob.type || "application/octet-stream",
     }),
   );
+  const headers: Record<string, string> = input.access.role === "host"
+    ? {
+        "x-manyvue-media-role": "host",
+        "x-manyvue-session-id": input.access.sessionId,
+        "x-manyvue-host-capability": input.access.hostCapability,
+        "x-manyvue-session-slug": input.session,
+        "x-manyvue-participant-id": input.participant,
+        "x-manyvue-burst-id": input.burstId,
+      }
+    : {
+        "x-manyvue-media-role": "participant",
+        "x-manyvue-session-slug": input.session,
+        "x-manyvue-participant-id": input.access.participantId,
+        "x-manyvue-participant-capability": input.access.participantCapability,
+        "x-manyvue-burst-id": input.burstId,
+      };
   const response = await requestWithRetry(fetcher, "/api/uploads", {
     method: "POST",
-    headers: {
-      "x-manyvue-media-role": "participant",
-      "x-manyvue-session-slug": input.session,
-      "x-manyvue-participant-id": input.participant,
-      "x-manyvue-participant-capability": input.participantCapability,
-      "x-manyvue-burst-id": input.burstId,
-    },
+    headers,
     body: form,
   });
   const payload = await response.json().catch(() => null) as {
