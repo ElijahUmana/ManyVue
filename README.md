@@ -241,6 +241,7 @@ These are enforced constants or authorization boundaries, not aspirational metri
 | Local Burst output | standalone **T−3s → T+3s** recording persisted to IndexedDB | Every phone owns a directly playable and downloadable personal Burst before network upload. |
 | Program safety segments | **9 seconds**, opened every **3 seconds**, finalized at **T+3** | Makes every live angle uploadable at the earliest truthful instant without replacing device-owned capture. |
 | Burst gallery refresh | every **700 ms** while sources are missing | Exposes newly ready angles quickly without continuously polling completed moments. |
+| Burst status truth | exact **ready / expected** counts from Convex | The UI never fabricates a minimum angle or says “saved” before every expected source is ready. |
 | Burst source ceiling | **1.8 MB ingress**, bounded low-bitrate sources | Keeps uploads reliable on congested event networks and below the deployed edge boundary. |
 | Signed replay URL | **24-hour HMAC lease** | Renderers can fetch a real source without making the storage bucket enumerable or public. |
 | Room credential | **2-hour**, room- and identity-scoped | Prevents arbitrary cross-room publication while surviving a complete set. |

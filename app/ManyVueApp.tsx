@@ -17,6 +17,7 @@ import {
 } from "@/lib/media";
 import { tryCreateContactSheet } from "@/lib/media/video-artifact";
 import { PRESENCE_HEARTBEAT_MS } from "@/lib/realtime/constants";
+import { burstDisplayState } from "@/lib/realtime/burst-display";
 import { BurstLibrary, type BurstLibraryEntry, type LocalBurstSource } from "./BurstLibrary";
 
 type Feed = {
@@ -287,21 +288,23 @@ function BurstExperience({
   total: number;
 }) {
   if (!(["capturing", "preview"] as BurstPhase[]).includes(phase)) return null;
-  const locked = Math.max(count, phase === "preview" ? 1 : 0);
-  const progress = total ? Math.max(12, Math.min(100, (locked / total) * 100)) : phase === "capturing" ? 42 : 12;
+  const expected = Math.max(1, total);
+  const locked = Math.max(0, Math.min(expected, count));
+  const complete = locked >= expected;
+  const progress = Math.min(100, (locked / expected) * 100);
 
   return (
     <div className={`burst-experience phase-${phase}`} role="status" aria-live="assertive">
       <div className="burst-experience-copy">
         <p className="eyebrow">YOUR BURST · T−3 → T+3</p>
         {phase === "capturing" && <strong>SAVING THE MOMENT</strong>}
-        {phase === "preview" && <strong>BURST SAVED</strong>}
+        {phase === "preview" && <strong>{complete ? "ALL ANGLES SAVED" : "FINALIZING ALL ANGLES"}</strong>}
         <span>
           {phase === "capturing"
-            ? "Your camera keeps rolling while six synchronized seconds are preserved"
-            : `${Math.max(locked, 1)} real ${Math.max(locked, 1) === 1 ? "angle" : "angles"} ready in View Bursts`}
+            ? `${locked}/${expected} angles ready · your camera keeps rolling while T+3 is preserved`
+            : `${locked}/${expected} real angles ready in View Bursts`}
         </span>
-        <div className="burst-capture-progress" aria-label={`${locked} of ${Math.max(total, 1)} active angles locked`}>
+        <div className="burst-capture-progress" aria-label={`${locked} of ${expected} active angles locked`}>
           <i style={{ width: `${progress}%` }} />
         </div>
       </div>
@@ -2004,7 +2007,9 @@ export default function ManyVueApp() {
     queueMicrotask(() => {
       setLastBurstCount(saved.readyCount);
       setBurstPhase("preview");
-      setDirectorDecision(`BURST SAVED · ${saved.readyCount}/${saved.expectedCount} ANGLES READY`);
+      setDirectorDecision(saved.readyCount >= saved.expectedCount
+        ? `BURST SAVED · ${saved.readyCount}/${saved.expectedCount} ANGLES READY`
+        : `BURST CAPTURING · ${saved.readyCount}/${saved.expectedCount} ANGLES READY`);
     });
   }, [burst, burstHistory, burstPhase, view]);
 
@@ -2081,6 +2086,18 @@ export default function ManyVueApp() {
   const artifactEditDone = (["rendering", "ready"] as ArtifactPhase[]).includes(artifactPhase);
   const ownedBurstHistory = ownedBurst ? burstHistory.find((entry) => entry.id === ownedBurst.id) : undefined;
   const programBurstHistory = burst ? burstHistory.find((entry) => entry.id === burst.id) : undefined;
+  const cameraBurstDisplay = burstDisplayState({
+    hasBurst: Boolean(ownedBurst),
+    phase: burstPhase,
+    readyCount: ownedBurstHistory?.readyCount ?? ownedBurst?.count ?? 0,
+    expectedCount: ownedBurstHistory?.expectedCount ?? cameraBrowseFeeds.length,
+  });
+  const {
+    readyCount: cameraBurstReadyCount,
+    expectedCount: cameraBurstExpectedCount,
+    complete: cameraBurstComplete,
+    collecting: cameraBurstCollecting,
+  } = cameraBurstDisplay;
 
   if (view === "camera") {
     return (
@@ -2221,10 +2238,24 @@ export default function ManyVueApp() {
                 <button key={angle} type="button" className={cameraAngle === angle ? "selected" : ""} onClick={() => chooseCameraAngle(angle)}>{angle}</button>
               ))}
             </div>
-            <button className={`burst-trigger ${ownedBurst ? "caught" : ""}`} onClick={triggerBurst} disabled={burstPending || !burstBufferReady}>
+            <button className={`burst-trigger ${cameraBurstComplete ? "caught" : cameraBurstCollecting ? "saving" : ""}`} onClick={triggerBurst} disabled={burstPending || !burstBufferReady || cameraBurstCollecting}>
               <span className="burst-rings" aria-hidden="true"><i /><i /></span>
-              <b>{!burstBufferReady ? "CHARGING 3-SECOND PRE-ROLL…" : burstPending ? "SAVING T−3 → T+3…" : ownedBurst ? "BURST SAVED · TAP FOR ANOTHER" : "BURST THIS MOMENT"}</b>
-              <small>{ownedBurst ? `${Math.max(1, ownedBurst.count)} saved angles · open View Bursts` : "Instant tap — no countdown, your full recording keeps running"}</small>
+              <b>{!burstBufferReady
+                ? "CHARGING 3-SECOND PRE-ROLL…"
+                : burstPending
+                  ? `CREATING ${cameraBurstExpectedCount}-ANGLE BURST…`
+                  : cameraBurstCollecting
+                    ? `CAPTURING ${cameraBurstExpectedCount} ANGLES · ${cameraBurstReadyCount} READY`
+                    : cameraBurstComplete
+                      ? `BURST SAVED · ${cameraBurstReadyCount}/${cameraBurstExpectedCount} ANGLES`
+                      : ownedBurst
+                        ? "BURST INCOMPLETE · TAP FOR ANOTHER"
+                        : "BURST THIS MOMENT"}</b>
+              <small>{ownedBurst
+                ? cameraBurstComplete
+                  ? "Every expected angle is ready · open View Bursts"
+                  : `${cameraBurstReadyCount}/${cameraBurstExpectedCount} expected angles ready`
+                : "Instant tap — no countdown, your full recording keeps running"}</small>
             </button>
             {burstPhase === "preserved" && ownedBurst && (
               <p className="camera-burst-preserved"><b>BURST PRESERVED</b> Your synchronized angle uploads now while the full recording continues uninterrupted.</p>
@@ -2344,7 +2375,7 @@ export default function ManyVueApp() {
         {burstPhase === "preserved" && (
           <aside className="burst-pipeline-status" role="status">
             <i aria-hidden="true" />
-            <span><b>BURST PRESERVED · {Math.max(lastBurstCount, 1)} ANGLES</b> Phones upload synchronized microclips now while the live film keeps running.</span>
+            <span><b>BURST PROGRESS · {programBurstHistory?.readyCount ?? lastBurstCount}/{programBurstHistory?.expectedCount ?? feeds.length} ANGLES READY</b> Phones upload synchronized microclips while the live film keeps running.</span>
             <button onClick={() => setBurstPhase("idle")}>DISMISS</button>
           </aside>
         )}
