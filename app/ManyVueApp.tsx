@@ -349,6 +349,7 @@ export default function ManyVueApp() {
   const [burstPhase, setBurstPhase] = useState<BurstPhase>("idle");
   const [lastBurstCount, setLastBurstCount] = useState(0);
   const [clipUrl, setClipUrl] = useState("");
+  const [clipExtension, setClipExtension] = useState<"mp4" | "webm">("webm");
   const [localBurstAsset, setLocalBurstAsset] = useState<{ url: string; extension: "mp4" | "webm" } | null>(null);
   const [uploadState, setUploadState] = useState<"idle" | "queued" | "uploading" | "uploaded" | "failed">("idle");
   const [artifactPhase, setArtifactPhase] = useState<ArtifactPhase>("idle");
@@ -1460,6 +1461,7 @@ export default function ManyVueApp() {
     if (recorder?.state === "recording") {
       const result = await recorder.stop();
       const localUrl = URL.createObjectURL(result.blob);
+      setClipExtension(result.blob.type.toLowerCase().includes("mp4") ? "mp4" : "webm");
       setClipUrl((current) => {
         if (current) URL.revokeObjectURL(current);
         clipUrlRef.current = localUrl;
@@ -2170,7 +2172,7 @@ export default function ManyVueApp() {
             </div>
             <video src={artifactUrl || clipUrl} controls playsInline />
             <div className="artifact-actions">
-              <a href={artifactUrl || clipUrl} download={artifactUrl ? "my-manyvue.mp4" : "my-angle.webm"}>{artifactUrl ? "DOWNLOAD MANYVUE" : "DOWNLOAD MY ANGLE"}</a>
+              <a href={artifactUrl || clipUrl} download={artifactUrl ? "my-manyvue.mp4" : `my-angle.${clipExtension}`}>{artifactUrl ? "DOWNLOAD MANYVUE" : "DOWNLOAD MY ANGLE"}</a>
               {localBurstAsset && (
                 <a href={localBurstAsset.url} download={`my-local-manyvue-burst.${localBurstAsset.extension}`}>
                   DOWNLOAD LOCAL BURST
