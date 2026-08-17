@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { selectDurableBurstChunks } from "./durable-burst-window";
+import { durableBurstCaptureTiming, selectDurableBurstChunks } from "./durable-burst-window";
 import type { StoredMediaChunk } from "./types";
 
 function chunk(sequence: number, startAtMs: number, endAtMs: number): StoredMediaChunk {
@@ -26,6 +26,17 @@ test("long iPhone recordings yield a bounded Burst plus the initialization chunk
   assert.equal(selected.timelineStartedAtMs, 0);
   assert.equal(selected.coverageStartedAtMs, 56_000);
   assert.equal(selected.coverageEndedAtMs, 64_000);
+
+  const timing = durableBurstCaptureTiming(selected, 60_000, 3_000, 3_000);
+  assert.deepEqual(timing, {
+    segmentStartedAtMs: 56_000,
+    segmentEndedAtMs: 64_000,
+    burstOffsetMs: 4_000,
+    windowStartOffsetMs: 1_000,
+    windowEndOffsetMs: 7_000,
+    availableDurationMs: 8_000,
+  });
+  assert.ok(timing.segmentEndedAtMs - timing.segmentStartedAtMs <= 15_000);
 });
 
 test("a Burst fails loudly when durable chunks do not cover the post-roll", () => {

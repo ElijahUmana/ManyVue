@@ -12,6 +12,7 @@ import {
   BURST_POST_ROLL_MS,
   BURST_PRE_ROLL_MS,
   createRecorderStreamLease,
+  durableBurstCaptureTiming,
   DurableMediaRecorder,
   selectDurableBurstChunks,
   RollingBurstRecorder,
@@ -123,17 +124,18 @@ class SingleRecorderBurstBuffer implements BurstRecorder {
     if (!selected) throw new Error("The iPhone recorder did not retain the complete three-second pre/post window.");
     const blob = new Blob(selected.chunks.map((chunk) => chunk.blob), { type: result.recording.mimeType });
     if (!blob.size) throw new Error("The iPhone Burst source contained no video data.");
+    const timing = durableBurstCaptureTiming(
+      selected,
+      anchorMs,
+      BURST_PRE_ROLL_MS,
+      BURST_POST_ROLL_MS,
+    );
     return {
       recordingId: result.recording.id,
       blob,
       mimeType: result.recording.mimeType,
       anchorMs,
-      segmentStartedAtMs: selected.timelineStartedAtMs,
-      segmentEndedAtMs: selected.coverageEndedAtMs,
-      burstOffsetMs: anchorMs - this.startedAtMs,
-      windowStartOffsetMs: anchorMs - this.startedAtMs - BURST_PRE_ROLL_MS,
-      windowEndOffsetMs: anchorMs - this.startedAtMs + BURST_POST_ROLL_MS,
-      availableDurationMs: selected.coverageEndedAtMs - this.startedAtMs,
+      ...timing,
     };
   }
 
@@ -1168,10 +1170,13 @@ export default function ManyVueApp() {
       }
       burstCaptureAttemptsRef.current.delete(sharedId);
       burstCapturedIdsRef.current.delete(sharedId);
+      const reason = error instanceof Error ? error.message : "Burst contribution failed on this camera.";
+      console.error("ManyVue Burst contribution failed", { burstId: sharedId, attempt, reason });
+      setTransportMessage(`Burst contribution failed: ${reason}`);
       if (initiatedHere) {
         setUploadState("failed");
         setArtifactPhase("failed");
-        setArtifactMessage(error instanceof Error ? error.message : "Burst upload failed; your full original remains safe on this device.");
+        setArtifactMessage(reason);
         setBurstPhase("idle");
       }
     }

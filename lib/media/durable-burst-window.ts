@@ -7,6 +7,15 @@ export type DurableBurstChunkSelection = {
   coverageEndedAtMs: number;
 };
 
+export type DurableBurstCaptureTiming = {
+  segmentStartedAtMs: number;
+  segmentEndedAtMs: number;
+  burstOffsetMs: number;
+  windowStartOffsetMs: number;
+  windowEndOffsetMs: number;
+  availableDurationMs: number;
+};
+
 /**
  * MediaRecorder time-slice chunks after the first one can depend on the file's
  * initialization/header chunk. Keep that first chunk plus only the fragments
@@ -40,5 +49,43 @@ export function selectDurableBurstChunks(
     timelineStartedAtMs: recordingStartedAtMs,
     coverageStartedAtMs,
     coverageEndedAtMs,
+  };
+}
+
+/**
+ * Converts a durable chunk selection into the truthful, bounded capture
+ * interval sent to Convex and the media pipeline. The initialization chunk may
+ * come from the beginning of a long recording so later fragments remain
+ * decodable, but it is not part of the preserved Burst timeline. Reporting the
+ * full recording start here would make an otherwise valid six-second Burst
+ * look minutes long and fail the server's window validation.
+ */
+export function durableBurstCaptureTiming(
+  selection: DurableBurstChunkSelection,
+  anchorMs: number,
+  preRollMs: number,
+  postRollMs: number,
+): DurableBurstCaptureTiming {
+  const windowStartMs = anchorMs - preRollMs;
+  const windowEndMs = anchorMs + postRollMs;
+  if (
+    ![anchorMs, preRollMs, postRollMs].every(Number.isFinite) ||
+    preRollMs < 0 ||
+    postRollMs < 0 ||
+    selection.coverageStartedAtMs > windowStartMs ||
+    selection.coverageEndedAtMs < windowEndMs
+  ) {
+    throw new Error("Durable Burst timing does not cover the requested capture window.");
+  }
+
+  const segmentStartedAtMs = selection.coverageStartedAtMs;
+  const segmentEndedAtMs = selection.coverageEndedAtMs;
+  return {
+    segmentStartedAtMs,
+    segmentEndedAtMs,
+    burstOffsetMs: anchorMs - segmentStartedAtMs,
+    windowStartOffsetMs: windowStartMs - segmentStartedAtMs,
+    windowEndOffsetMs: windowEndMs - segmentStartedAtMs,
+    availableDurationMs: segmentEndedAtMs - segmentStartedAtMs,
   };
 }
